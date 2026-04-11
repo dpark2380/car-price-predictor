@@ -78,6 +78,15 @@ export default function CarIntelDashboard() {
   const [sortKey, setSortKey] = useState("score");   // score | price | savings | mileage
   const [sortDir, setSortDir] = useState("desc");    // asc | desc
 
+  const [estMake, setEstMake] = useState("");
+  const [estModel, setEstModel] = useState("");
+  const [estYear, setEstYear] = useState("");
+  const [estMileage, setEstMileage] = useState("");
+  const [estAccidents, setEstAccidents] = useState("0");
+  const [estResult, setEstResult] = useState(null);
+  const [estLoading, setEstLoading] = useState(false);
+  const [estError, setEstError] = useState(null);
+
   useEffect(() => {
     const load = async (key, url, setter) => {
       try {
@@ -235,7 +244,14 @@ export default function CarIntelDashboard() {
 
         {/* Nav bar */}
         <header style={{ position: "relative", zIndex: 10, borderBottom: "1px solid #e2e8f0", background: "#f8fafcee", backdropFilter: "blur(12px)", padding: "0 40px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
-          <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 28, letterSpacing: "0.1em", color: "#2563eb" }}>CARINTEL</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 28, letterSpacing: "0.1em", color: "#2563eb" }}>CARINTEL</div>
+            <button onClick={() => setView("estimator")} style={{ background: "none", border: "1px solid #e2e8f0", borderRadius: 4, padding: "5px 14px", fontFamily: "monospace", fontSize: 11, color: "#475569", cursor: "pointer", letterSpacing: "0.08em" }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#2563eb"; e.currentTarget.style.color = "#2563eb"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e2e8f0"; e.currentTarget.style.color = "#475569"; }}>
+              PRICE CHECK
+            </button>
+          </div>
           <div style={{ display: "flex", gap: 24 }}>
             {[
               { label: "LISTINGS", value: isLoading ? "—" : fmtN(stats.active_listings) },
@@ -359,6 +375,100 @@ export default function CarIntelDashboard() {
     );
   }
 
+  // ── PRICE ESTIMATOR PAGE ─────────────────────────────────────────────────────
+  if (view === "estimator") {
+    const runEstimate = async () => {
+      if (!estMake || !estModel || !estYear || !estMileage) {
+        setEstError("Please fill in all required fields.");
+        return;
+      }
+      setEstLoading(true);
+      setEstError(null);
+      setEstResult(null);
+      try {
+        const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, accident_count: estAccidents });
+        const res = await fetch(`${API}/predict?${params}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        setEstResult(data);
+      } catch (e) {
+        setEstError(e.message);
+      } finally {
+        setEstLoading(false);
+      }
+    };
+
+    const inputStyle = { background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 4, padding: "10px 12px", fontFamily: "monospace", fontSize: 13, color: "#0f172a", width: "100%", outline: "none", boxSizing: "border-box" };
+    const labelStyle = { fontFamily: "monospace", fontSize: 9, color: "#64748b", letterSpacing: "0.1em", display: "block", marginBottom: 4 };
+
+    return (
+      <div style={{ minHeight: "100vh", background: "#f8fafc", color: "#0f172a", fontFamily: "'DM Sans', sans-serif", position: "relative" }}>
+        <style>{sharedStyles}</style>
+        {gridBg}
+
+        {/* Header */}
+        <header style={{ position: "relative", zIndex: 10, borderBottom: "1px solid #e2e8f0", background: "#f8fafcee", backdropFilter: "blur(12px)", padding: "0 32px", display: "flex", alignItems: "center", height: 60, gap: 16 }}>
+          <button onClick={() => setView("home")} style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "'Bebas Neue',sans-serif", fontSize: 28, letterSpacing: "0.1em", color: "#2563eb", lineHeight: 1, padding: 0 }}>CARINTEL</button>
+          <div style={{ width: 1, height: 24, background: "#e2e8f0" }} />
+          <div style={{ fontFamily: "monospace", fontSize: 11, color: "#475569", letterSpacing: "0.1em" }}>PRICE CHECK</div>
+        </header>
+
+        {/* Form */}
+        <div style={{ display: "flex", justifyContent: "center", padding: "60px 32px", position: "relative", zIndex: 1 }}>
+          <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "40px 44px", boxShadow: "0 4px 24px #0f172a0a", width: "100%", maxWidth: 560 }}>
+            <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8", letterSpacing: "0.12em", marginBottom: 28 }}>MARKET PRICE ESTIMATOR</div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={labelStyle}>MAKE *</label>
+                <input style={inputStyle} placeholder="e.g. Toyota" value={estMake} onChange={(e) => setEstMake(e.target.value)} />
+              </div>
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={labelStyle}>MODEL *</label>
+                <input style={inputStyle} placeholder="e.g. Camry" value={estModel} onChange={(e) => setEstModel(e.target.value)} />
+              </div>
+              <div>
+                <label style={labelStyle}>YEAR *</label>
+                <input style={inputStyle} type="number" placeholder="e.g. 2019" min="1990" max="2025" value={estYear} onChange={(e) => setEstYear(e.target.value)} />
+              </div>
+              <div>
+                <label style={labelStyle}>MILEAGE *</label>
+                <input style={inputStyle} type="number" placeholder="e.g. 45000" min="0" value={estMileage} onChange={(e) => setEstMileage(e.target.value)} />
+              </div>
+              <div>
+                <label style={labelStyle}>ACCIDENTS</label>
+                <input style={inputStyle} type="number" placeholder="0" min="0" max="10" value={estAccidents} onChange={(e) => setEstAccidents(e.target.value)} />
+              </div>
+            </div>
+
+            {estError && (
+              <div style={{ marginTop: 16, fontFamily: "monospace", fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #ef4444", borderRadius: 4, padding: "10px 14px" }}>
+                {estError}
+              </div>
+            )}
+
+            <button onClick={runEstimate} disabled={estLoading}
+              style={{ marginTop: 24, width: "100%", background: "#2563eb", color: "#ffffff", border: "none", borderRadius: 6, padding: "13px", fontFamily: "monospace", fontSize: 13, fontWeight: 700, letterSpacing: "0.08em", cursor: estLoading ? "wait" : "pointer", opacity: estLoading ? 0.7 : 1 }}>
+              {estLoading ? "ESTIMATING..." : "GET ESTIMATE →"}
+            </button>
+
+            {estResult && (
+              <div style={{ marginTop: 28, borderTop: "1px solid #e2e8f0", paddingTop: 28, textAlign: "center" }}>
+                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8", letterSpacing: "0.12em", marginBottom: 8 }}>ESTIMATED MARKET VALUE</div>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 56, color: "#2563eb", letterSpacing: "0.04em", lineHeight: 1 }}>
+                  {fmt$(estResult.predicted_price)}
+                </div>
+                <div style={{ fontFamily: "monospace", fontSize: 11, color: "#64748b", marginTop: 8 }}>
+                  {estYear} {estMake} · {parseInt(estMileage).toLocaleString()} mi
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── RESULTS PAGE ─────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", color: "#0f172a", fontFamily: "'DM Sans', sans-serif", position: "relative" }}>
@@ -404,6 +514,12 @@ export default function CarIntelDashboard() {
           </button>
           <div style={{ width: 1, height: 24, background: "#e2e8f0" }} />
           <div style={{ fontFamily: "monospace", fontSize: 11, color: "#475569", letterSpacing: "0.1em" }}>DEAL FINDER</div>
+          <div style={{ width: 1, height: 24, background: "#e2e8f0" }} />
+          <button onClick={() => setView("estimator")} style={{ background: "none", border: "none", fontFamily: "monospace", fontSize: 11, color: "#475569", cursor: "pointer", letterSpacing: "0.1em", padding: 0 }}
+            onMouseEnter={(e) => e.currentTarget.style.color = "#2563eb"}
+            onMouseLeave={(e) => e.currentTarget.style.color = "#475569"}>
+            PRICE CHECK
+          </button>
         </div>
 
         {currentTicker.make && (

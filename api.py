@@ -315,6 +315,48 @@ def recent_listings():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/predict")
+def predict_price():
+    """
+    Returns a predicted market price for a given car.
+    Required: make, model, year, mileage
+    Optional: accident_count, owner_count, state
+    """
+    make       = request.args.get("make", "").strip()
+    model_name = request.args.get("model", "").strip()
+    year       = request.args.get("year", type=int)
+    mileage    = request.args.get("mileage", type=int)
+
+    if not make or not model_name or not year or mileage is None:
+        return jsonify({"error": "make, model, year, and mileage are required"}), 400
+
+    try:
+        from ml.pipeline import load as load_model, _build_features_raw
+        import numpy as np
+
+        payload = load_model()
+        if payload is None:
+            return jsonify({"error": "Model not available"}), 503
+
+        row = {
+            "make":           make,
+            "model":          model_name,
+            "year":           year,
+            "mileage":        mileage,
+            "accident_count": request.args.get("accident_count", 0, type=int),
+            "owner_count":    request.args.get("owner_count", 1, type=int),
+            "location_state": request.args.get("state", ""),
+        }
+
+        X = _build_features_raw(pd.DataFrame([row]))
+        log_calibration = payload.get("log_calibration", 0.0)
+        predicted = float(np.expm1(payload["model"].predict(X)[0] - log_calibration))
+
+        return jsonify({"predicted_price": round(predicted, 0)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     print(f"Car Intel API running on port {port}")
