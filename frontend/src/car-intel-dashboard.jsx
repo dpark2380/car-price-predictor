@@ -93,7 +93,7 @@ export default function CarIntelDashboard() {
       }
     };
 
-    load("deals", `${API}/deals?limit=5000&min_score=0`, setDeals);
+    load("deals", `${API}/deals?limit=10000&min_score=0`, setDeals);
     load("stats", `${API}/stats`, setStats);
   }, []);
 
