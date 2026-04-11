@@ -368,9 +368,9 @@ export default function CarIntelDashboard() {
       {apiError && (
         <div
           style={{
-            background: "#ef444422",
+            background: "#fef2f2",
             border: "1px solid #ef4444",
-            color: "#fca5a5",
+            color: "#991b1b",
             padding: "10px 24px",
             fontFamily: "monospace",
             fontSize: 12,
