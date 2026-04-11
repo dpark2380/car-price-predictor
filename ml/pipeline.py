@@ -1,9 +1,20 @@
 import os
+import warnings
 import joblib
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from loguru import logger
+
+# market_median_price / market_dom_median / price_to_market are optional enrichment
+# features that are intentionally all-NaN when MarketCheck API calls are disabled.
+# Suppress the imputer warning that fires once per tree for these columns.
+warnings.filterwarnings(
+    "ignore",
+    message="Skipping features without any observed values",
+    category=UserWarning,
+    module="sklearn",
+)
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error
