@@ -1,5 +1,6 @@
 flask
 flask-cors
+gunicorn
 sqlalchemy
 pandas
 numpy

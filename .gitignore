@@ -6,11 +6,10 @@ __pycache__/
 .env.*
 *.log
 
-# Local DB / models
-car_intel.db
-models/
+# Local DB / models (car_intel.db and models/ are committed for deployment)
 *.sqlite
 *.db
+!car_intel.db
 
 # Frontend
 frontend/node_modules/

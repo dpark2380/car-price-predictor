@@ -5,7 +5,7 @@ import Spinner from "./components/common/Spinner";
 import DealBadge from "./components/deals/DealBadge";
 
 
-const API = "http://localhost:5001/api";
+const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
 // Body types that support Small/Medium/Large sub-filtering (matched lowercase)
 const SIZE_SUPPORTED = new Set(["suv", "truck", "sedan", "hatchback"]);
