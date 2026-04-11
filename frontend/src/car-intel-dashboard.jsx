@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { getDealColor, scoreToStars, starsDisplay } from "./utils/scoreColor.js";
 import Spinner from "./components/common/Spinner";
+// eslint-disable-next-line no-unused-vars
 import DealBadge from "./components/deals/DealBadge";
 
 
@@ -64,9 +65,13 @@ export default function CarIntelDashboard() {
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState({ deals: true, stats: true });
 
+  // eslint-disable-next-line no-unused-vars
   const [benchmark, setBenchmark] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [salesStats, setSalesStats] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [salesLoading, setSalesLoading] = useState(false);
   const [apiError, setApiError] = useState(false);
 
