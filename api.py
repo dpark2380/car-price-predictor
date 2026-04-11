@@ -4,6 +4,7 @@ Run: PYTHONPATH=. python3 api.py
 """
 
 import math
+import os
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -315,5 +316,6 @@ def recent_listings():
 
 
 if __name__ == "__main__":
-    print("🚗 Car Intel API running at http://localhost:5001")
-    app.run(debug=True, port=5001)
+    port = int(os.environ.get("PORT", 5001))
+    print(f"Car Intel API running on port {port}")
+    app.run(host="0.0.0.0", debug=False, port=port)
