@@ -127,6 +127,15 @@ export default function CarIntelDashboard() {
     return Array.from(set).sort((a, b) => a - b);
   }, [deals]);
 
+  const estModelOptions = useMemo(() => {
+    if (!estMake) return [];
+    const set = new Set();
+    (deals || [])
+      .filter((d) => d.make?.toLowerCase() === estMake)
+      .forEach((d) => { if (d.model) set.add(d.model.toLowerCase()); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [deals, estMake]);
+
   const bodyOptions = useMemo(() => {
     const set = new Set();
     (deals || []).forEach((d) => set.add(normalizeBodyType(d.body_type)));
@@ -421,11 +430,17 @@ export default function CarIntelDashboard() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={labelStyle}>MAKE *</label>
-                <input style={inputStyle} placeholder="e.g. Toyota" value={estMake} onChange={(e) => setEstMake(e.target.value)} />
+                <select style={inputStyle} value={estMake} onChange={(e) => { setEstMake(e.target.value); setEstModel(""); setEstResult(null); }}>
+                  <option value="">Select Make</option>
+                  {makeOptions.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+                </select>
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label style={labelStyle}>MODEL *</label>
-                <input style={inputStyle} placeholder="e.g. Camry" value={estModel} onChange={(e) => setEstModel(e.target.value)} />
+                <label style={{ ...labelStyle, opacity: !estMake ? 0.45 : 1 }}>MODEL *</label>
+                <select style={{ ...inputStyle, opacity: !estMake ? 0.45 : 1 }} value={estModel} onChange={(e) => { setEstModel(e.target.value); setEstResult(null); }} disabled={!estMake}>
+                  <option value="">Select Model</option>
+                  {estModelOptions.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+                </select>
               </div>
               <div>
                 <label style={labelStyle}>YEAR *</label>
