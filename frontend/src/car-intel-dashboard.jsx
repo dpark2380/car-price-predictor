@@ -82,6 +82,7 @@ export default function CarIntelDashboard() {
   const [estModel, setEstModel] = useState("");
   const [estYear, setEstYear] = useState("");
   const [estMileage, setEstMileage] = useState("");
+  const [estTrim, setEstTrim] = useState("");
   const [estAccidents, setEstAccidents] = useState("0");
   const [estResult, setEstResult] = useState(null);
   const [estLoading, setEstLoading] = useState(false);
@@ -135,6 +136,15 @@ export default function CarIntelDashboard() {
       .forEach((d) => { if (d.model) set.add(d.model.toLowerCase()); });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [deals, estMake]);
+
+  const estTrimOptions = useMemo(() => {
+    if (!estMake || !estModel) return [];
+    const set = new Set();
+    (deals || [])
+      .filter((d) => d.make?.toLowerCase() === estMake && d.model?.toLowerCase() === estModel)
+      .forEach((d) => { if (d.trim) set.add(d.trim.trim()); });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [deals, estMake, estModel]);
 
   const bodyOptions = useMemo(() => {
     const set = new Set();
@@ -395,7 +405,7 @@ export default function CarIntelDashboard() {
       setEstError(null);
       setEstResult(null);
       try {
-        const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, accident_count: estAccidents });
+        const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, accident_count: estAccidents, ...(estTrim && { trim: estTrim }) });
         const res = await fetch(`${API}/predict?${params}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -430,18 +440,27 @@ export default function CarIntelDashboard() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={labelStyle}>MAKE *</label>
-                <select style={inputStyle} value={estMake} onChange={(e) => { setEstMake(e.target.value); setEstModel(""); setEstResult(null); }}>
+                <select style={inputStyle} value={estMake} onChange={(e) => { setEstMake(e.target.value); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
                   <option value="">Select Make</option>
                   {makeOptions.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
                 </select>
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={{ ...labelStyle, opacity: !estMake ? 0.45 : 1 }}>MODEL *</label>
-                <select style={{ ...inputStyle, opacity: !estMake ? 0.45 : 1 }} value={estModel} onChange={(e) => { setEstModel(e.target.value); setEstResult(null); }} disabled={!estMake}>
+                <select style={{ ...inputStyle, opacity: !estMake ? 0.45 : 1 }} value={estModel} onChange={(e) => { setEstModel(e.target.value); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
                   <option value="">Select Model</option>
                   {estModelOptions.map((m) => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
                 </select>
               </div>
+              {estTrimOptions.length > 0 && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ ...labelStyle, opacity: !estModel ? 0.45 : 1 }}>TRIM</label>
+                  <select style={{ ...inputStyle, opacity: !estModel ? 0.45 : 1 }} value={estTrim} onChange={(e) => { setEstTrim(e.target.value); setEstResult(null); }} disabled={!estModel}>
+                    <option value="">Any Trim</option>
+                    {estTrimOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label style={labelStyle}>YEAR *</label>
                 <input style={inputStyle} type="number" placeholder="e.g. 2019" min="1990" max="2025" value={estYear} onChange={(e) => setEstYear(e.target.value)} />

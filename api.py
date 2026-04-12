@@ -343,6 +343,7 @@ def predict_price():
             "model":          model_name,
             "year":           year,
             "mileage":        mileage,
+            "trim":           request.args.get("trim", ""),
             "accident_count": request.args.get("accident_count", 0, type=int),
             "owner_count":    request.args.get("owner_count", 1, type=int),
             "location_state": request.args.get("state", ""),
