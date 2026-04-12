@@ -16,7 +16,7 @@ warnings.filterwarnings(
     module="sklearn",
 )
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -157,6 +157,46 @@ def _apply_cohort_features(X: pd.DataFrame, cohort_stats: pd.DataFrame) -> pd.Da
     return X
 
 
+def _kfold_cohort_encode(
+    X: pd.DataFrame, y: pd.Series, n_splits: int = 5
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Compute cohort_median_price and cohort_count for each training row using
+    k-fold target encoding to prevent leakage.
+
+    For each row, the cohort median is computed from the other k-1 folds —
+    so no row ever sees its own price when its cohort feature is computed.
+
+    Also returns full_cohort_stats (computed from all training data), which is
+    saved in the model payload and used at inference time (score_listings,
+    /api/predict) where there is no leakage concern.
+    """
+    X = X.copy()
+    cohort_median = np.full(len(X), np.nan)
+    cohort_count  = np.zeros(len(X))
+
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    arr_y = y.to_numpy()
+
+    for train_idx, val_idx in kf.split(X):
+        fold_stats = _compute_cohort_stats(X.iloc[train_idx], y.iloc[train_idx])
+        keys = pd.MultiIndex.from_arrays([
+            X.iloc[val_idx]["make"],
+            X.iloc[val_idx]["model"],
+            X.iloc[val_idx]["year"],
+        ])
+        cohort_median[val_idx] = fold_stats["cohort_median"].reindex(keys).to_numpy()
+        cohort_count[val_idx]  = fold_stats["cohort_count"].reindex(keys).fillna(0).to_numpy()
+
+    X["cohort_median_price"] = cohort_median
+    X["cohort_count"]        = cohort_count.astype(float)
+
+    # Full cohort stats for inference — saved in model payload
+    full_cohort_stats = _compute_cohort_stats(X.drop(columns=["cohort_median_price", "cohort_count"]), y)
+
+    return X, full_cohort_stats
+
+
 def train(df: pd.DataFrame) -> dict | None:
     logger.info("Starting model training run…")
 
@@ -169,7 +209,7 @@ def train(df: pd.DataFrame) -> dict | None:
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
 
     df = df.dropna(subset=["price", "mileage", "year"])
-    df = df[df["price"].between(500, 100_000)]
+    df = df[df["price"].between(3_000, 100_000)]
     df = df[df["mileage"].between(0, 400_000)]
 
     if len(df) < MIN_TRAINING_SAMPLES:
@@ -186,7 +226,10 @@ def train(df: pd.DataFrame) -> dict | None:
         X_raw, y, test_size=0.2, random_state=42
     )
 
-    # Cohort stats computed from training data only (no API calls, no leakage into test)
+    # K-fold cohort encoding — no leakage, full stats saved for inference
+    X_train, full_cohort_stats = _kfold_cohort_encode(X_train, y_train)
+    X_test = _apply_cohort_features(X_test, full_cohort_stats)
+
     # log-space targets (this is what we train on)
     y_train_log = np.log1p(y_train)
     y_test_log = np.log1p(y_test)
@@ -201,6 +244,7 @@ def train(df: pd.DataFrame) -> dict | None:
         "is_luxury", "is_truck", "is_sports",
         "lux_age", "lux_mpy",
         "market_median_price", "market_dom_median", "price_to_market",
+        "cohort_median_price", "cohort_count",
     ]
     categorical_features = [
         "make", "model", "state",
@@ -362,6 +406,7 @@ def train(df: pd.DataFrame) -> dict | None:
         "selected_model": best_name,
         "metrics": metrics,
         "log_calibration": log_calibration,
+        "cohort_stats": full_cohort_stats,
     }
 
     os.makedirs("models", exist_ok=True)
@@ -474,6 +519,9 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
 
     logger.info(f"Scoring {len(df)} listings…")
     X = _build_features_raw(df)
+    cohort_stats = payload.get("cohort_stats")
+    if cohort_stats is not None:
+        X = _apply_cohort_features(X, cohort_stats)
     log_calibration = payload.get("log_calibration", 0.0)
     preds = np.expm1(model.predict(X) - log_calibration)
 

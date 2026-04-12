@@ -331,7 +331,7 @@ def predict_price():
         return jsonify({"error": "make, model, year, and mileage are required"}), 400
 
     try:
-        from ml.pipeline import load as load_model, _build_features_raw
+        from ml.pipeline import load as load_model, _build_features_raw, _apply_cohort_features
         import numpy as np
 
         payload = load_model()
@@ -350,6 +350,9 @@ def predict_price():
         }
 
         X = _build_features_raw(pd.DataFrame([row]))
+        cohort_stats = payload.get("cohort_stats")
+        if cohort_stats is not None:
+            X = _apply_cohort_features(X, cohort_stats)
         log_calibration = payload.get("log_calibration", 0.0)
         predicted = float(np.expm1(payload["model"].predict(X)[0] - log_calibration))
 
