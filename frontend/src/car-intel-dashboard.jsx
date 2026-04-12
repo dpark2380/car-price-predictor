@@ -435,7 +435,7 @@ export default function CarIntelDashboard() {
         {/* Form */}
         <div style={{ display: "flex", justifyContent: "center", padding: "60px 32px", position: "relative", zIndex: 1 }}>
           <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "40px 44px", boxShadow: "0 4px 24px #0f172a0a", width: "100%", maxWidth: 560 }}>
-            <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8", letterSpacing: "0.12em", marginBottom: 28 }}>MARKET PRICE ESTIMATOR</div>
+            <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8", letterSpacing: "0.12em", marginBottom: 28 }}>PRICE ESTIMATOR</div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ gridColumn: "1 / -1" }}>
@@ -488,7 +488,7 @@ export default function CarIntelDashboard() {
 
             {estResult && (
               <div style={{ marginTop: 28, borderTop: "1px solid #e2e8f0", paddingTop: 28, textAlign: "center" }}>
-                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8", letterSpacing: "0.12em", marginBottom: 8 }}>ESTIMATED MARKET VALUE</div>
+                <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8", letterSpacing: "0.12em", marginBottom: 8 }}>ESTIMATED VALUE</div>
                 <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 56, color: "#2563eb", letterSpacing: "0.04em", lineHeight: 1 }}>
                   {fmt$(estResult.predicted_price)}
                 </div>
@@ -714,7 +714,7 @@ export default function CarIntelDashboard() {
 
           <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 110px 110px 100px 80px 110px", padding: "10px 20px", borderBottom: "1px solid #e2e8f0", background: "#f1f5f9" }}>
-              {["VEHICLE", "PRICE", "MARKET VALUE", "SAVINGS", "MILEAGE", "STATE", "SCORE"].map((h) => (
+              {["VEHICLE", "PRICE", "EST. VALUE", "SAVINGS", "MILEAGE", "STATE", "SCORE"].map((h) => (
                 <div key={h} style={{ fontFamily: "monospace", fontSize: 9, color: "#475569", letterSpacing: "0.1em" }}>{h}</div>
               ))}
             </div>
@@ -810,7 +810,7 @@ export default function CarIntelDashboard() {
                         <div style={{ display: "flex", gap: 28, marginTop: 12, flexWrap: "wrap" }}>
                           {[
                             { label: "Listed Price", value: fmt$(selectedDeal.price), color: "#0f172a" },
-                            { label: "Market Value", value: fmt$(selectedDeal.predicted_price), color: "#64748b" },
+                            { label: "Est. Value", value: fmt$(selectedDeal.predicted_price), color: "#64748b" },
                             { label: "You Save", value: fmt$(selectedDeal.savings), color: selectedDeal.savings >= 0 ? "#22c55e" : "#ef4444" },
                             { label: "Mileage", value: `${fmtN(selectedDeal.mileage)} mi`, color: "#94a3b8" },
                             { label: "Deal Score", value: starsDisplay(selectedDeal.deal_score), color: getDealColor(selectedDeal.deal_score) },
