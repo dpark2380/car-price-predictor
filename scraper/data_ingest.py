@@ -344,7 +344,7 @@ TARGET_PARAMS = {
 
 
 class DataIngestor:
-    CALLS_PER_TARGET = 10
+    CALLS_PER_TARGET = 2
     ROWS_PER_CALL    = 50
 
     def __init__(self):
