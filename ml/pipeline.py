@@ -38,6 +38,35 @@ from sklearn.impute import SimpleImputer
 
 MODEL_PATH = "models/price_predictor.joblib"
 MIN_TRAINING_SAMPLES = int(os.getenv("MIN_TRAINING_SAMPLES", 140))
+TRIM_RANKINGS_PATH = "config/trim_rankings.json"
+
+import json as _json
+def _load_trim_rankings() -> dict:
+    try:
+        with open(TRIM_RANKINGS_PATH) as f:
+            data = _json.load(f)
+        return {k: v for k, v in data.items() if not k.startswith("_")}
+    except Exception:
+        return {}
+
+_TRIM_RANKINGS = _load_trim_rankings()
+
+
+def _trim_rank(make: str, trim: str) -> float:
+    """
+    Look up a numeric trim rank for a given make + trim string.
+    Matches longest keyword first to avoid 'turbo' beating 'turbo s'.
+    Returns 2.0 (mid-range default) if make not in rankings or no keyword matches.
+    """
+    make_map = _TRIM_RANKINGS.get(make.lower().strip(), {})
+    if not make_map:
+        return 2.0
+    trim_lower = str(trim).lower().strip() if trim and trim == trim else ""
+    # Sort by keyword length descending so longer/more specific keywords win
+    for keyword in sorted(make_map, key=len, reverse=True):
+        if keyword in trim_lower:
+            return float(make_map[keyword])
+    return 2.0
 
 
 def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
@@ -102,6 +131,9 @@ def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- extra categoricals (safe fallback to "")
     out["trim"]         = _norm_str(df.get("trim", pd.Series([""] * len(df), index=df.index)))
+    out["trim_rank"]    = [
+        _trim_rank(m, t) for m, t in zip(out["make"], out["trim"])
+    ]
     out["body_type"]    = _norm_str(df.get("body_type", pd.Series([""] * len(df), index=df.index)))
     out["drivetrain"]   = _norm_str(df.get("drivetrain", pd.Series([""] * len(df), index=df.index)))
     out["fuel_type"]    = _norm_str(df.get("fuel_type", pd.Series([""] * len(df), index=df.index)))
@@ -243,6 +275,7 @@ def train(df: pd.DataFrame) -> dict | None:
         "accident_count", "owner_count",
         "is_luxury", "is_truck", "is_sports",
         "lux_age", "lux_mpy",
+        "trim_rank",
         "market_median_price", "market_dom_median", "price_to_market",
         "cohort_median_price", "cohort_count",
     ]
