@@ -16,7 +16,7 @@ warnings.filterwarnings(
     module="sklearn",
 )
 
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split, KFold, GridSearchCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -31,6 +31,7 @@ except ImportError:
     logger.warning("XGBoost not installed — using sklearn fallback")
     from sklearn.ensemble import GradientBoostingRegressor
 
+from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
@@ -315,10 +316,88 @@ def train(df: pd.DataFrame) -> dict | None:
     }
 
     if HAS_XGB:
-        candidates["xgb"] = XGBRegressor(
-            n_estimators=1500,
+        # Joint grid search over M (n_estimators) and eta (learning_rate).
+        # These two are not independent: small eta needs many trees to converge,
+        # large eta converges faster but may overshoot. Searching them jointly
+        # finds the true optimum rather than two separate marginal optima.
+        _base_xgb = XGBRegressor(
             max_depth=6,
-            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            min_child_weight=3,
+            gamma=0.05,
+            reg_alpha=0.05,
+            reg_lambda=1.0,
+            random_state=42,
+            verbosity=0,
+            objective="reg:absoluteerror",
+        )
+        _gs_pipe = Pipeline(steps=[
+            ("preprocess", preprocess),
+            ("model", _base_xgb),
+        ])
+        _param_grid = {
+            "model__learning_rate": [0.01, 0.03, 0.05, 0.1],
+            "model__n_estimators":  [500, 1000, 1500, 2000],
+        }
+        logger.info("Running XGB grid search (4×4 grid, 5-fold CV = 80 fits)…")
+        _gs = GridSearchCV(
+            _gs_pipe,
+            _param_grid,
+            cv=5,
+            scoring="neg_mean_absolute_error",
+            n_jobs=-1,
+            refit=False,
+            verbose=0,
+        )
+        _gs.fit(X_train, y_train_log)
+        _best = _gs.best_params_
+        logger.info(
+            f"XGB grid search best: learning_rate={_best['model__learning_rate']}, "
+            f"n_estimators={_best['model__n_estimators']}  "
+            f"(CV MAE log={-_gs.best_score_:.4f})"
+        )
+
+        # Early stopping: find the true optimal n_estimators given the best lr.
+        # The grid search ceiling (2000) may be too low or higher than needed —
+        # early stopping on a held-out slice tells us exactly when to stop.
+        _X_tr_es, _X_val_es, _y_tr_es, _y_val_es = train_test_split(
+            X_train, y_train_log, test_size=0.15, random_state=0
+        )
+        _pre_es = clone(preprocess)
+        _pre_es.fit(X_train)  # fit on full X_train so OHE sees all categories
+        _xgb_es = XGBRegressor(
+            n_estimators=3000,
+            learning_rate=_best["model__learning_rate"],
+            max_depth=6,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            min_child_weight=3,
+            gamma=0.05,
+            reg_alpha=0.05,
+            reg_lambda=1.0,
+            random_state=42,
+            verbosity=0,
+            objective="reg:absoluteerror",
+            early_stopping_rounds=50,
+            eval_metric="mae",
+        )
+        _xgb_es.fit(
+            _pre_es.transform(_X_tr_es),
+            _y_tr_es,
+            eval_set=[(_pre_es.transform(_X_val_es), _y_val_es)],
+            verbose=False,
+        )
+        _optimal_n = _xgb_es.best_iteration
+        logger.info(
+            f"Early stopping: optimal n_estimators={_optimal_n} "
+            f"(ceiling=3000, grid search suggested {_best['model__n_estimators']})"
+        )
+
+        candidates["xgb"] = XGBRegressor(
+            n_estimators=_optimal_n,
+            learning_rate=_best["model__learning_rate"],
+            max_depth=6,
             subsample=0.8,
             colsample_bytree=0.7,
             min_child_weight=3,
