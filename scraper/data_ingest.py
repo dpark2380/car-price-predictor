@@ -265,11 +265,19 @@ class MarketCheckClient:
         page_cursor = _load_page_cursor(page_cursor_path) if rotate_pages else 0
         start_offset = (page_cursor % pages_in_rotation) * rows_per_call
 
+        # Always call start=0 first to catch the freshest listings (API returns
+        # most recently posted first). Remaining calls explore the rotated offset
+        # for deeper inventory. Deduplicate so we don't double-call when offset=0.
+        _call_starts = [0]
+        for i in range(max_calls - 1):
+            pos = start_offset + i * rows_per_call
+            if pos not in _call_starts:
+                _call_starts.append(pos)
+
         reset_to_zero = False
 
-        for i in range(max_calls):
-            start = start_offset + i * rows_per_call
-            logger.info(f"  Marketcheck call {i+1}/{max_calls} (start={start})")
+        for _call_idx, start in enumerate(_call_starts):
+            logger.info(f"  Marketcheck call {_call_idx+1}/{len(_call_starts)} (start={start})")
 
             try:
                 # IMPORTANT: don't mutate params across iterations
@@ -366,7 +374,7 @@ class DataIngestor:
             rows_per_call=self.ROWS_PER_CALL,
             max_calls=self.CALLS_PER_TARGET,
             rotate_pages=True,
-            pages_in_rotation=10,
+            pages_in_rotation=8,
             page_cursor_path=page_cursor_path,
             zip_cursor_path=zip_cursor_path,
             car_type="used",
