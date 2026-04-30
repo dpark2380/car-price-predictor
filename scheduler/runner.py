@@ -3,6 +3,11 @@ scheduler/runner.py — Orchestrates scrape → score → train jobs
 """
 
 import argparse
+import csv
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
 from loguru import logger
 
 from db.models import init_db, get_session
@@ -12,6 +17,62 @@ from ml import pipeline
 
 from scraper.api_usage import get_calls_today
 
+LOGS_DIR = Path("logs")
+
+# ── Persistent run logging ────────────────────────────────────────────────────
+
+def _append_csv(path: Path, row: dict) -> None:
+    """Append one row to a CSV log, writing headers on first write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def log_scrape(new: int, updated: int, total_active: int, targets: list[str]) -> None:
+    row = {
+        "timestamp":    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "new":          new,
+        "updated":      updated,
+        "total_active": total_active,
+        "targets":      "|".join(targets),
+    }
+    _append_csv(LOGS_DIR / "scrape_log.csv", row)
+
+
+def log_training(result: dict) -> None:
+    metrics = result.get("metrics", {})
+
+    def m(model: str, key: str):
+        return round(metrics.get(model, {}).get(key, float("nan")), 1) if model in metrics else ""
+
+    row = {
+        "timestamp":          datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+        "model_version":      result.get("version", ""),
+        "n_rows":             result.get("n", ""),
+        "train_rows":         result.get("train_rows", ""),
+        "test_rows":          result.get("test_rows", ""),
+        "selected_model":     result.get("selected_model", ""),
+        # per-candidate MAE
+        "linear_mae":         m("linear", "mae"),
+        "relaxed_lasso_mae":  m("relaxed_lasso", "mae"),
+        "rf_mae":             m("rf", "mae"),
+        "xgb_mae":            m("xgb", "mae"),
+        # XGB detail
+        "xgb_rmse":           m("xgb", "rmse"),
+        "xgb_luxury_mae":     m("xgb", "luxury_mae"),
+        "xgb_nonlux_mae":     m("xgb", "nonlux_mae"),
+        # XGB hyperparams (returned only when XGB was tuned)
+        "xgb_lr":             result.get("xgb_lr", ""),
+        "xgb_n_estimators":   result.get("xgb_n_estimators", ""),
+    }
+    _append_csv(LOGS_DIR / "training_log.csv", row)
+
+
+# ── Jobs ──────────────────────────────────────────────────────────────────────
 
 def load_targets(path: str = "config/search_targets.json") -> list[dict]:
     import json
@@ -29,7 +90,7 @@ def scrape_job(
     targets = load_targets()
     total_new = 0
     total_upd = 0
-    seen_ids: set[str] = set()
+    target_names = []
 
     for target in targets:
         name = target.get("name")
@@ -42,19 +103,11 @@ def scrape_job(
             ins, upd = repo.upsert_listings(listings)
             total_new += ins
             total_upd += upd
+            target_names.append(name)
 
-            # be defensive: only add non-empty ids
-            for l in listings:
-                lid = l.get("listing_id")
-                if lid:
-                    seen_ids.add(lid)
-
-    # Optional: mark inactive based on "not seen recently".
-    # NOTE: seen_ids is not used by mark_inactive() in repo; it uses last_seen timestamps.
-    # If you want "not in this scrape" logic, we can add a repo.mark_inactive_by_seen_ids(seen_ids).
-    # repo.mark_inactive(scrape_source="cars.com", older_than_hours=48)
-
-    logger.info(f"▶ Scrape job done | new={total_new} updated={total_upd}")
+    total_active = repo.count_active()
+    logger.info(f"▶ Scrape job done | new={total_new} updated={total_upd} active={total_active}")
+    log_scrape(total_new, total_upd, total_active, target_names)
 
 
 def score_job(repo: ListingRepository, pred_repo: PredictionRepository):
@@ -99,6 +152,7 @@ def ml_train_job(repo: ListingRepository):
         logger.warning("Training did not run (insufficient data)")
         return
 
+    log_training(result)
     logger.info("▶ ML train job complete")
 
 
@@ -132,7 +186,7 @@ def main():
             repo = ListingRepository(session)
             pred = PredictionRepository(session)
             pop = PopularityRepository(session)
-            scrape_job(repo, pred, pop)   # ONLY scrape
+            scrape_job(repo, pred, pop)
         finally:
             session.close()
         return
