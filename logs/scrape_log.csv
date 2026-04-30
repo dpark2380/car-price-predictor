@@ -1,0 +1,12 @@
+timestamp,new,updated,total_active,targets
+2026-04-27 19:11,51,43,6084,used_cars
+2026-04-27 19:15,191,82,6265,used_cars|trucks|suvs
+2026-04-27 19:15,144,83,6409,used_cars|trucks|suvs
+2026-04-27 19:16,140,85,6549,used_cars|trucks|suvs
+2026-04-27 19:16,111,66,6670,used_cars|trucks|suvs
+2026-04-27 19:19,189,77,6916,used_cars|trucks|suvs
+2026-04-27 19:20,77,131,6993,used_cars|trucks|suvs
+2026-04-28 03:22,166,125,7159,used_cars|trucks|suvs
+2026-04-28 03:23,99,95,7258,used_cars|trucks|suvs
+2026-04-30 04:06,163,112,7421,used_cars|trucks|suvs
+2026-04-30 04:07,6,28,7427,used_cars
