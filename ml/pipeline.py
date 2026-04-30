@@ -16,11 +16,12 @@ warnings.filterwarnings(
     module="sklearn",
 )
 
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split, KFold, GridSearchCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.inspection import permutation_importance
+from sklearn.base import BaseEstimator, RegressorMixin, clone
 
 
 try:
@@ -32,9 +33,124 @@ except ImportError:
     from sklearn.ensemble import GradientBoostingRegressor
 
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+
+class RelaxedLasso(BaseEstimator, RegressorMixin):
+    """
+    Two-step Relaxed LASSO (mirrors the R notes workflow):
+
+    Step 1 — LassoCV (equivalent to cv.glmnet, alpha=1):
+        Fits LASSO across a path of lambda values with k-fold CV.
+        The lambda that minimises CV error selects a sparse set of features
+        by driving weak coefficients exactly to zero.
+
+    Step 2 — OLS refit on selected features (equivalent to lm() in the notes):
+        Refits plain LinearRegression on only the surviving features.
+        This removes the shrinkage bias introduced by LASSO — the kept
+        coefficients are no longer pulled toward zero, so they are
+        interpretable as ordinary regression coefficients.
+
+    Why standardise first?
+        glmnet standardises internally before applying the L1 penalty so
+        that the penalty treats all features equally regardless of scale.
+        sklearn's LassoCV does not do this, so we standardise manually.
+        The OLS refit uses the original (unstandardised) X so that
+        coefficients are interpretable in their natural units.
+
+    Attributes after fit:
+        lasso_          : fitted LassoCV object (access .alpha_ for chosen lambda)
+        selected_mask_  : boolean array of which preprocessed columns survived
+        n_selected_     : int, number of surviving features
+        ols_            : fitted LinearRegression on the selected columns
+        lasso_coef_     : LASSO coefficients for selected features (shrunk)
+        ols_coef_       : OLS coefficients for selected features (unbiased)
+    """
+
+    def __init__(
+        self,
+        cv: int = 5,
+        max_iter: int = 10000,
+        tol: float = 1e-3,
+        max_features: int = 150,
+    ):
+        self.cv = cv
+        self.max_iter = max_iter
+        self.tol = tol
+        # Hard cap on features: if lambda_min selects more than max_features,
+        # walk lambda upward through the CV path (increasing regularisation)
+        # until the count falls at or below the cap. This takes the minimum
+        # lambda that satisfies the constraint — least additional regularisation
+        # beyond what is strictly needed for a stable OLS refit.
+        self.max_features = max_features
+
+    def fit(self, X, y, sample_weight=None):
+        import scipy.sparse as sp
+        from sklearn.linear_model import Lasso
+
+        # Standardise for LASSO selection (mirrors glmnet's internal scaling).
+        # with_mean=False is required for sparse matrices.
+        is_sparse = sp.issparse(X)
+        self.scaler_ = StandardScaler(with_mean=not is_sparse)
+        X_scaled = self.scaler_.fit_transform(X)
+
+        # Step 1: LASSO with cross-validated lambda (equivalent to cv.glmnet)
+        self.lasso_ = LassoCV(
+            cv=self.cv,
+            max_iter=self.max_iter,
+            tol=self.tol,
+            n_jobs=-1,
+        )
+        self.lasso_.fit(X_scaled, y)
+
+        self.lambda_min_ = self.lasso_.alpha_
+        coef = self.lasso_.coef_.copy()
+        self.lambda_used_ = self.lambda_min_
+
+        # If lambda_min selects more than max_features, walk lambda upward
+        # through the tested path (ascending = increasing regularisation).
+        # Take the first lambda that brings the count within the cap.
+        if np.sum(np.abs(coef) > 1e-8) > self.max_features:
+            # alphas_ are sorted descending in LassoCV; reverse for ascending walk
+            for alpha in sorted(self.lasso_.alphas_):
+                if alpha <= self.lambda_min_:
+                    continue  # already tried this — need more regularisation
+                _l = Lasso(alpha=alpha, max_iter=self.max_iter, tol=self.tol)
+                _l.fit(X_scaled, y)
+                if np.sum(np.abs(_l.coef_) > 1e-8) <= self.max_features:
+                    coef = _l.coef_
+                    self.lambda_used_ = alpha
+                    break
+
+        # Features with non-zero LASSO coefficients are "selected"
+        self.selected_mask_ = np.abs(coef) > 1e-8
+        self.n_selected_ = int(self.selected_mask_.sum())
+        self.lasso_coef_ = coef[self.selected_mask_]
+
+        # Step 2: OLS refit on unscaled selected features (debiased / relaxed)
+        X_dense = X.toarray() if is_sparse else X
+        X_sel = X_dense[:, self.selected_mask_]
+        self.ols_ = LinearRegression()
+        if self.n_selected_ > 0:
+            fit_kwargs = {"sample_weight": sample_weight} if sample_weight is not None else {}
+            self.ols_.fit(X_sel, y, **fit_kwargs)
+            self.ols_coef_ = self.ols_.coef_
+        else:
+            # Degenerate case: LASSO zeroed everything — fall back to intercept
+            self.ols_.intercept_ = float(np.mean(y))
+            self.ols_.coef_ = np.array([])
+            self.ols_coef_ = np.array([])
+
+        return self
+
+    def predict(self, X):
+        import scipy.sparse as sp
+        X_dense = X.toarray() if sp.issparse(X) else X
+        if self.n_selected_ == 0:
+            return np.full(X_dense.shape[0], self.ols_.intercept_)
+        return self.ols_.predict(X_dense[:, self.selected_mask_])
+
 
 MODEL_PATH = "models/price_predictor.joblib"
 MIN_TRAINING_SAMPLES = int(os.getenv("MIN_TRAINING_SAMPLES", 140))
@@ -306,6 +422,7 @@ def train(df: pd.DataFrame) -> dict | None:
     # -----------------------------
     candidates: dict[str, object] = {
         "linear": LinearRegression(),
+        "relaxed_lasso": RelaxedLasso(cv=5, max_iter=10000, tol=1e-3),
         "rf": RandomForestRegressor(
             n_estimators=300,
             random_state=42,
@@ -315,10 +432,88 @@ def train(df: pd.DataFrame) -> dict | None:
     }
 
     if HAS_XGB:
-        candidates["xgb"] = XGBRegressor(
-            n_estimators=1500,
+        # Joint grid search over M (n_estimators) and eta (learning_rate).
+        # These two are not independent: small eta needs many trees to converge,
+        # large eta converges faster but may overshoot. Searching them jointly
+        # finds the true optimum rather than two separate marginal optima.
+        _base_xgb = XGBRegressor(
             max_depth=6,
-            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            min_child_weight=3,
+            gamma=0.05,
+            reg_alpha=0.05,
+            reg_lambda=1.0,
+            random_state=42,
+            verbosity=0,
+            objective="reg:absoluteerror",
+        )
+        _gs_pipe = Pipeline(steps=[
+            ("preprocess", preprocess),
+            ("model", _base_xgb),
+        ])
+        _param_grid = {
+            "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15, 0.2],
+            "model__n_estimators":  [500, 1000, 1500, 2000],
+        }
+        logger.info("Running XGB grid search (6×4 grid, 5-fold CV = 120 fits)…")
+        _gs = GridSearchCV(
+            _gs_pipe,
+            _param_grid,
+            cv=5,
+            scoring="neg_mean_absolute_error",
+            n_jobs=-1,
+            refit=False,
+            verbose=0,
+        )
+        _gs.fit(X_train, y_train_log)
+        _best = _gs.best_params_
+        logger.info(
+            f"XGB grid search best: learning_rate={_best['model__learning_rate']}, "
+            f"n_estimators={_best['model__n_estimators']}  "
+            f"(CV MAE log={-_gs.best_score_:.4f})"
+        )
+
+        # Early stopping: find the true optimal n_estimators given the best lr.
+        # The grid search ceiling (2000) may be too low or higher than needed —
+        # early stopping on a held-out slice tells us exactly when to stop.
+        _X_tr_es, _X_val_es, _y_tr_es, _y_val_es = train_test_split(
+            X_train, y_train_log, test_size=0.15, random_state=0
+        )
+        _pre_es = clone(preprocess)
+        _pre_es.fit(X_train)  # fit on full X_train so OHE sees all categories
+        _xgb_es = XGBRegressor(
+            n_estimators=3000,
+            learning_rate=_best["model__learning_rate"],
+            max_depth=6,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            min_child_weight=3,
+            gamma=0.05,
+            reg_alpha=0.05,
+            reg_lambda=1.0,
+            random_state=42,
+            verbosity=0,
+            objective="reg:absoluteerror",
+            early_stopping_rounds=50,
+            eval_metric="mae",
+        )
+        _xgb_es.fit(
+            _pre_es.transform(_X_tr_es),
+            _y_tr_es,
+            eval_set=[(_pre_es.transform(_X_val_es), _y_val_es)],
+            verbose=False,
+        )
+        _optimal_n = _xgb_es.best_iteration
+        logger.info(
+            f"Early stopping: optimal n_estimators={_optimal_n} "
+            f"(ceiling=3000, grid search suggested {_best['model__n_estimators']})"
+        )
+
+        candidates["xgb"] = XGBRegressor(
+            n_estimators=_optimal_n,
+            learning_rate=_best["model__learning_rate"],
+            max_depth=6,
             subsample=0.8,
             colsample_bytree=0.7,
             min_child_weight=3,
@@ -350,6 +545,31 @@ def train(df: pd.DataFrame) -> dict | None:
         ])
 
         pipe.fit(X_train, y_train_log, model__sample_weight=sample_weight)
+
+        # ---- Relaxed LASSO: log selected features + coefficient comparison ----
+        if name == "relaxed_lasso":
+            rl = pipe.named_steps["model"]
+            try:
+                feat_names = pipe.named_steps["preprocess"].get_feature_names_out()
+                sel = feat_names[rl.selected_mask_]
+                total = len(feat_names)
+                logger.info(
+                    f"Relaxed LASSO: {rl.n_selected_}/{total} features selected  "
+                    f"(λ_used={rl.lambda_used_:.5f}, λ_min={rl.lambda_min_:.5f})"
+                )
+                # Mirror the R notes: show LASSO estimate vs OLS (debiased) estimate
+                coef_rows = sorted(
+                    zip(sel, rl.lasso_coef_, rl.ols_coef_),
+                    key=lambda r: abs(r[2]),
+                    reverse=True,
+                )
+                header = f"  {'Feature':<45} {'LASSO':>10}  {'OLS (debiased)':>14}"
+                lines = [header, "  " + "-" * 73]
+                for feat, lc, oc in coef_rows[:20]:
+                    lines.append(f"  {feat:<45} {lc:>+10.4f}  {oc:>+14.4f}")
+                logger.info("Top 20 coefficients (log-price space):\n" + "\n".join(lines))
+            except Exception as e:
+                logger.warning(f"Could not log Relaxed LASSO coefficients: {e}")
 
         # ---- training RMSE (log-space) for ALL models (works consistently) ----
         pred_train_log = pipe.predict(X_train)
@@ -468,11 +688,18 @@ def train(df: pd.DataFrame) -> dict | None:
     logger.info(f"Train/Test split: {len(X_train)}/{len(X_test)}")
     logger.info("="*72 + "\n")
 
+    xgb_lr = candidates["xgb"].learning_rate if "xgb" in candidates else None
+    xgb_n  = candidates["xgb"].n_estimators  if "xgb" in candidates else None
+
     return {
-        "version": version,
+        "version":        version,
         "selected_model": best_name,
-        "metrics": metrics,
-        "n": int(len(df)),
+        "metrics":        metrics,
+        "n":              int(len(df)),
+        "train_rows":     int(len(X_train)),
+        "test_rows":      int(len(X_test)),
+        "xgb_lr":         xgb_lr,
+        "xgb_n_estimators": xgb_n,
     }
 
 

@@ -44,22 +44,24 @@ class ListingRepository:
             )
 
             if existing:
-                # Update fields
+                # Confirm still active and stamp when we last saw it
                 existing.last_seen = now
                 existing.is_active = 1
 
-                # optionally update scrape_source to latest seen (or keep original)
-                if data.get("scrape_source"):
-                    existing.scrape_source = data.get("scrape_source", existing.scrape_source)
-
-                for k, v in data.items():
-                    if k in {"id", "listing_id"}:
-                        continue
-                    if hasattr(existing, k) and v is not None:
+                # Only mutable fields that can legitimately change between scrapes:
+                # price (dealer reductions), mileage (odometer corrections),
+                # days_listed from API dom (reflects actual market age),
+                # and dealer metadata
+                mutable_fields = {
+                    "price", "mileage", "days_listed",
+                    "dealer_name", "dealer_rating",
+                    "location_city", "location_state", "location_zip",
+                    "scrape_source",
+                }
+                for k in mutable_fields:
+                    v = data.get(k)
+                    if v is not None and hasattr(existing, k):
                         setattr(existing, k, v)
-
-                if existing.first_seen:
-                    existing.days_listed = (now - existing.first_seen).days
 
                 updated += 1
             else:
