@@ -611,3 +611,123 @@ The cap finds the minimum additional regularisation beyond lambda_min that produ
 | 2026-04-27 | ~7,000 | XGB (hardcoded params) | $2,866–3,107 | Grid search lost in stash ops |
 | 2026-04-28 | 6,982 | XGB grid search + early stop | $2,864 | Grid search restored, n=796 |
 | 2026-04-28 | 6,982 | Relaxed LASSO (144 features) | $4,138 | Interpretability candidate |
+| 2026-04-30 | 7,410 | XGB grid search + early stop | **$2,786** | Best result to date, n=1,329 |
+| 2026-04-30 | 7,415 | XGB grid search + early stop | $2,966 | 429 rate limit hit trucks/SUVs mid-run |
+
+---
+
+## 16. Limitations
+
+### 16.1 What $2,786 MAE Actually Means in Practice
+
+MAE measures the average absolute dollar error across the test set. In isolation this number looks acceptable, but it is heteroscedastic — the error is not uniform across price tiers:
+
+| Price tier | MAE | Error as % of price |
+|---|---|---|
+| $10,000 car | ~$2,786 | ~28% |
+| $20,000 car | ~$2,786 | ~14% |
+| $35,000 car | ~$2,786 | ~8% |
+| $60,000 car | ~$2,786 | ~5% |
+
+For a $12,000 economy car, a $2,786 error means the model might predict $9,200 or $14,800 — both plausible to a human but the difference changes whether the car looks like a deal. For a $45,000 luxury SUV the same absolute error is less consequential. The model works better at the top of the price range than the bottom.
+
+Additionally, MAE is measured on a held-out test set of ~1,400 listings — a single 80/20 split. The variance between runs on the same dataset is $150–400 depending on which listings land in the test set. The "true" generalization error is a distribution, not a single number.
+
+---
+
+### 16.2 Missing Features
+
+The single biggest gap between this model and production-quality used car pricing tools is **condition and options data** — neither of which the Marketcheck API returns in a structured form.
+
+**Condition:**
+- Exterior and interior condition ratings (excellent / good / fair / poor)
+- Tyre wear, rust, dents, mechanical issues
+- Service history completeness
+- Accident severity (we have accident count but not whether it was a fender bender or a frame hit)
+
+**Options and packages:**
+- Sunroof / panoramic roof
+- Leather vs cloth interior
+- Navigation, premium audio
+- Towing package, off-road package
+- All-wheel drive vs two-wheel drive (partially captured by `drivetrain` but often missing)
+- Sport package vs base
+
+A car with full options can command 10–20% more than a base-trim version of the same model/year/mileage. Without options data, the model averages across both and is wrong for both. This is likely the primary reason individual predictions look off — two cars that look identical to the model (same make/model/year/mileage) can have a $3,000–5,000 genuine price difference due to options.
+
+**Other missing signals:**
+- Color (silver/white/black are easier to sell, commanding a slight premium; unusual colors discount)
+- Certified Pre-Owned status (CPO commands 5–15% premium over equivalent non-CPO)
+- Days on market (a listing sitting for 90 days at the same price is almost certainly overpriced relative to the model's estimate)
+- Private seller vs dealer (our data is dealer-only; private listings typically run 5–10% cheaper)
+
+---
+
+### 16.3 Data Volume and Cohort Sparsity
+
+At ~7,400 listings, many (make, model, year) cohorts have very few examples. The `cohort_median_price` feature — our strongest signal — degrades for rare vehicles because a median of 2–3 observations is noisy.
+
+Vehicles most affected:
+- **Exotic/ultra-luxury** (Bentley, Aston Martin, Lamborghini): sub-$100k examples are rare, the cohort median is unstable, and these were genuinely hard to price even with perfect features
+- **Discontinued models** (Pontiac Firebird, VW EuroVan, Dodge Viper): few recent listings, prices driven by collector demand which the model cannot capture
+- **Very new model years**: limited training examples, the model extrapolates from older years
+
+The Relaxed LASSO coefficient table actually reveals this problem clearly — the top OLS coefficients are dominated by exactly these rare, high-value models (560 series, EuroVan, Viper) where sparse data inflates coefficient estimates.
+
+---
+
+### 16.4 Geographic Scope
+
+All scraped listings are from western US markets (California, Pacific Northwest, Southwest, Mountain West). The model is implicitly a western US pricing model:
+
+- **Pickup trucks** are priced differently in Texas/Southeast vs California (rust, demand, dealer culture)
+- **Luxury vehicles** carry different premiums in major metro areas vs secondary markets
+- **Electric vehicles** have different demand profiles in California (high EV adoption) vs the national average
+
+The `state` and `zip3` features partially account for regional variation but have very low permutation importance (~0.005–0.013) because the training data doesn't have enough cross-regional examples for the model to learn regional adjustments reliably.
+
+---
+
+### 16.5 Market Timing
+
+Used car prices are volatile. The COVID period (2020–2022) saw prices increase 30–50% due to new car shortages; prices have since partially corrected but remain elevated compared to pre-2020 norms.
+
+The model is trained on current listings and reflects current market conditions. It has no mechanism to:
+- Detect a market-wide price shift (rising interest rates, new model releases, fuel price spikes)
+- Distinguish between a car that's overpriced vs a car whose segment has simply appreciated
+- Account for seasonal demand (convertibles in spring, 4WD in autumn)
+
+A listing flagged as "overpriced" may simply be priced for a market the model was trained on two months ago. Retraining on fresh data (which the scheduler handles) is the main mitigation.
+
+---
+
+### 16.6 Single Train/Test Split Variance
+
+All reported MAE figures come from a single 80/20 split with `random_state=42`. The variance between runs on the same dataset — purely from which listings land in the test set — is $150–400 in MAE. This means:
+
+- The difference between a $2,786 run and a $2,966 run on the same day (April 30) is partly real (different dataset from the 429 rate limit) and partly split noise
+- Reported MAE should be interpreted as "approximately $2,800–3,000" not as a precise figure
+- Cross-validation of the final model (not just the grid search) would give a more reliable estimate
+
+---
+
+### 16.7 Deal Score Reliability
+
+The deal score maps the gap between predicted and actual price to a 0–100 scale. Given the model's MAE of ~$2,786, a car priced exactly at market value (true score = 50) could be predicted anywhere from roughly 40–60.
+
+**Practical implication:** the deal score is most reliable at the extremes. A score of 85+ genuinely indicates an unusually good deal; a score of 15 or lower genuinely indicates an overpriced listing. Scores in the 40–60 range ("fair price") should be treated as noise — the model cannot reliably distinguish "exactly at market" from "slightly above or below market" given its current error level.
+
+---
+
+### 16.8 Summary — What Would Improve the Model Most
+
+In order of expected impact:
+
+| Fix | Expected MAE reduction | Difficulty |
+|---|---|---|
+| Add condition/options data (VIN decode or manual flags) | Large (~$500–1,000) | High — requires different data source |
+| Grow dataset to 20k+ listings | Moderate (~$300–500) | Medium — time + API budget |
+| Expand to national geographic coverage | Moderate (~$200–400) | Low — add eastern US zips once data volume supports it |
+| Add days-on-market as a feature | Small (~$100–200) | Low — data already captured, just not used |
+| Cross-validate final model | No MAE change — better error estimates | Low |
+| Add CPO flag as a feature | Small (~$100–200) | Medium — would need to scrape or infer |
