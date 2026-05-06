@@ -352,7 +352,7 @@ TARGET_PARAMS = {
 
 
 class DataIngestor:
-    CALLS_PER_TARGET = 2
+    CALLS_PER_TARGET = 5
     ROWS_PER_CALL    = 50
 
     def __init__(self):
@@ -374,7 +374,7 @@ class DataIngestor:
             rows_per_call=self.ROWS_PER_CALL,
             max_calls=self.CALLS_PER_TARGET,
             rotate_pages=True,
-            pages_in_rotation=8,
+            pages_in_rotation=16,
             page_cursor_path=page_cursor_path,
             zip_cursor_path=zip_cursor_path,
             car_type="used",

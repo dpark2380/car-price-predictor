@@ -605,6 +605,27 @@ def train(df: pd.DataFrame) -> dict | None:
             f"luxury=${lux_mae:,.0f} (n={lux_n}) nonlux=${nonlux_mae:,.0f} (n={nonlux_n})"
         )
 
+        # Price tier breakdown — shows % error at each price level.
+        # MAE is heteroscedastic: the same dollar error hits cheap cars harder.
+        _buckets = [
+            ("<$10k",   0,      10_000),
+            ("$10-20k", 10_000, 20_000),
+            ("$20-35k", 20_000, 35_000),
+            ("$35-60k", 35_000, 60_000),
+            (">$60k",   60_000, float("inf")),
+        ]
+        _tier_parts = []
+        for _label, _lo, _hi in _buckets:
+            _mask = (y_true >= _lo) & (y_true < _hi)
+            _n = int(_mask.sum())
+            if _n < 5:
+                continue
+            _tier_mae  = float(np.mean(np.abs(pred_test[_mask] - y_true[_mask])))
+            _tier_mean = float(np.mean(y_true[_mask]))
+            _tier_pct  = _tier_mae / _tier_mean * 100
+            _tier_parts.append(f"{_label} ${_tier_mae:,.0f} ({_tier_pct:.0f}%,n={_n})")
+        logger.info("  tiers | " + " | ".join(_tier_parts))
+
     # pick best by MAE
     best_name = min(metrics.keys(), key=lambda k: metrics[k]["mae"])
     pipe = fitted[best_name]
