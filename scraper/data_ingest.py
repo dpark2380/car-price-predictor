@@ -140,15 +140,19 @@ def normalize_body_type(bt: str | None) -> str | None:
         "pickup": "Truck",
         "pickup truck": "Truck",
         "truck": "Truck",
-        "Cutaway": "Truck",
+        "cutaway": "Truck",
+        "chassis cab": "Truck",
         "van": "Van",
         "minivan": "Van",
         "mini van": "Van",
         "car van": "Van",
         "cargo van": "Van",
         "passenger van": "Van",
-        "Combi": "Van",
-        "Mini Mpv": "Van",
+        "combi": "Van",
+        "mini mpv": "Van",
+
+        # Sports
+        "targa": "Convertible",
     }
 
     return aliases.get(s, bt.strip())

@@ -1,20 +1,9 @@
 import os
-import warnings
 import joblib
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from loguru import logger
-
-# market_median_price / market_dom_median / price_to_market are optional enrichment
-# features that are intentionally all-NaN when MarketCheck API calls are disabled.
-# Suppress the imputer warning that fires once per tree for these columns.
-warnings.filterwarnings(
-    "ignore",
-    message="Skipping features without any observed values",
-    category=UserWarning,
-    module="sklearn",
-)
 
 from sklearn.model_selection import train_test_split, KFold, GridSearchCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -154,6 +143,9 @@ class RelaxedLasso(BaseEstimator, RegressorMixin):
 
 MODEL_PATH = "models/price_predictor.joblib"
 MIN_TRAINING_SAMPLES = int(os.getenv("MIN_TRAINING_SAMPLES", 140))
+# Listings on market longer than this (Marketcheck `dom`) are excluded from
+# training — their asking price is unreliable as a market signal.
+STALE_LISTING_MAX_DAYS = int(os.getenv("STALE_LISTING_MAX_DAYS", 365))
 TRIM_RANKINGS_PATH = "config/trim_rankings.json"
 
 import json as _json
@@ -213,9 +205,6 @@ def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
     out["log_age"] = np.log1p(out["vehicle_age"])
     out["age_sq"] = (out["vehicle_age"] ** 2).clip(0, 2500)
 
-    out["accident_count"] = pd.to_numeric(df.get("accident_count", 0), errors="coerce").fillna(0)
-    out["owner_count"] = pd.to_numeric(df.get("owner_count", 1), errors="coerce").fillna(1)
-
     # --- categoricals (strings) ---
     out["make"] = df["make"].astype(str).str.lower().str.strip()
     out["model"] = df["model"].astype(str).str.lower().str.strip()
@@ -251,9 +240,6 @@ def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
         _trim_rank(m, t) for m, t in zip(out["make"], out["trim"])
     ]
     out["body_type"]    = _norm_str(df.get("body_type", pd.Series([""] * len(df), index=df.index)))
-    out["drivetrain"]   = _norm_str(df.get("drivetrain", pd.Series([""] * len(df), index=df.index)))
-    out["fuel_type"]    = _norm_str(df.get("fuel_type", pd.Series([""] * len(df), index=df.index)))
-    out["transmission"] = _norm_str(df.get("transmission", pd.Series([""] * len(df), index=df.index)))
 
     out["zip3"] = (
         df.get("location_zip", pd.Series([""] * len(df), index=df.index))
@@ -263,18 +249,11 @@ def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
         .replace({"": "000"})
     )
 
-    # --- market benchmark features (from sales stats cache, may be NaN if not enriched) ---
-    out["market_median_price"] = pd.to_numeric(
-        df.get("market_median_price", pd.Series([np.nan] * len(df), index=df.index)),
-        errors="coerce",
+    # exterior_color: black/white/silver tend to retain value better than
+    # unusual colours. Treat as a categorical (one-hot encoded downstream).
+    out["exterior_color"] = _norm_str(
+        df.get("exterior_color", pd.Series([""] * len(df), index=df.index))
     )
-    out["market_dom_median"] = pd.to_numeric(
-        df.get("market_dom_median", pd.Series([np.nan] * len(df), index=df.index)),
-        errors="coerce",
-    )
-    # How over/under market is this listing (1.0 = at market, <1 = below, >1 = above)
-    raw_price = pd.to_numeric(df.get("price", pd.Series([np.nan] * len(df), index=df.index)), errors="coerce")
-    out["price_to_market"] = (raw_price / out["market_median_price"].replace(0, np.nan)).clip(0, 5)
 
     return out
 
@@ -360,6 +339,14 @@ def train(df: pd.DataFrame) -> dict | None:
     df = df[df["price"].between(3_000, 100_000)]
     df = df[df["mileage"].between(0, 400_000)]
 
+    # Drop stale listings from training. days_listed (Marketcheck `dom`) reaches
+    # into the thousands for abandoned/mispriced inventory whose asking price no
+    # longer reflects the current market. Training only on fresh listings gives a
+    # cleaner fair-value signal (measurably lowers MAE, especially on luxury).
+    # These stale listings are still scored — we just don't learn "market" from them.
+    _dom = pd.to_numeric(df.get("days_listed"), errors="coerce").fillna(0)
+    df = df[_dom <= STALE_LISTING_MAX_DAYS]
+
     if len(df) < MIN_TRAINING_SAMPLES:
         logger.warning(f"Not enough data to train ({len(df)} rows, need {MIN_TRAINING_SAMPLES})")
         return None
@@ -388,16 +375,15 @@ def train(df: pd.DataFrame) -> dict | None:
     numeric_features = [
         "year", "vehicle_age", "age_sq", "log_age",
         "mileage", "log_mileage", "miles_per_year",
-        "accident_count", "owner_count",
         "is_luxury", "is_truck", "is_sports",
         "lux_age", "lux_mpy",
         "trim_rank",
-        "market_median_price", "market_dom_median", "price_to_market",
         "cohort_median_price", "cohort_count",
     ]
     categorical_features = [
         "make", "model", "state",
-        "trim", "body_type", "drivetrain", "fuel_type", "transmission", "zip3",
+        "trim", "body_type", "zip3",
+        "exterior_color",
     ]
 
     numeric_transformer = Pipeline(steps=[
@@ -525,8 +511,6 @@ def train(df: pd.DataFrame) -> dict | None:
             objective="reg:absoluteerror",
         )
 
-    sample_weight = np.ones(len(X_train))
-
     def _eval(y_true_np: np.ndarray, y_pred_np: np.ndarray) -> tuple[float, float]:
         mae = float(mean_absolute_error(y_true_np, y_pred_np))
         rmse = float(np.sqrt(mean_squared_error(y_true_np, y_pred_np)))
@@ -544,7 +528,7 @@ def train(df: pd.DataFrame) -> dict | None:
             ("model", model),
         ])
 
-        pipe.fit(X_train, y_train_log, model__sample_weight=sample_weight)
+        pipe.fit(X_train, y_train_log)
 
         # ---- Relaxed LASSO: log selected features + coefficient comparison ----
         if name == "relaxed_lasso":

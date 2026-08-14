@@ -18,11 +18,13 @@ export function starsDisplay(score) {
   return "★".repeat(n) + "☆".repeat(5 - n);
 }
 
+// Returns theme-aware CSS custom properties (defined in theme.css) so deal
+// colors adapt to light/dark mode and stay WCAG AA compliant in both.
 export function getDealColor(score) {
   const s = score ?? 50;
-  if (s >= 90) return "#22c55e"; // 5 stars
-  if (s >= 75) return "#84cc16"; // 4 stars
-  if (s >= 60) return "#f59e0b"; // 3 stars
-  if (s >= 45) return "#94a3b8"; // 2 stars
-  return "#ef4444";              // 1 star
+  if (s >= 90) return "var(--color-deal-excellent)"; // 5 stars
+  if (s >= 75) return "var(--color-deal-good)";      // 4 stars
+  if (s >= 60) return "var(--color-deal-fair)";      // 3 stars
+  if (s >= 45) return "var(--color-deal-poor)";      // 2 stars
+  return "var(--color-deal-bad)";                    // 1 star
 }

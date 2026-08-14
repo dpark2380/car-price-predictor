@@ -1,0 +1,144 @@
+/**
+ * CarIntel theme system — CSS custom properties, class-toggled on <html>.
+ *
+ * How it works
+ * ------------
+ * - `:root` defines the LIGHT theme. No class, no JavaScript required:
+ *   a fresh page load renders correctly with CSS alone.
+ * - `html.theme-dark` overrides the same tokens for dark mode.
+ * - A 3-line inline script in public/index.html restores a saved preference
+ *   (localStorage "carintel-theme") before first paint, so there is no flash
+ *   of the wrong theme. Without JS, the page simply renders light.
+ *
+ * Adding a new theme
+ * ------------------
+ * Add one block — no other changes anywhere:
+ *
+ *   html.theme-sepia {
+ *     --color-bg: ...;            (redefine every token below)
+ *   }
+ *
+ * Then set `theme-sepia` on <html> (and persist "sepia" to localStorage).
+ *
+ * Naming
+ * ------
+ * Tokens are semantic (what the color MEANS), never literal (what it looks
+ * like). Components must only reference var(--color-*) — never raw hex.
+ *
+ * Contrast (WCAG 2.1 AA, 4.5:1 normal text / 3:1 large text & UI graphics)
+ * ------------------------------------------------------------------------
+ * Every *-text-grade token below meets >= 4.5:1 against both --color-bg and
+ * --color-surface in its theme:
+ *
+ *   light: text-primary 17.9 | text-secondary 7.0 | text-muted 4.8
+ *          text-subtle 4.8 | accent 5.2 | on-accent/accent-solid 5.2
+ *          success 5.0 | warning 5.0 | danger 4.8
+ *          deal: 5.0 / 5.0 / 5.0 / 4.8 / 4.8
+ *   dark:  text-primary 13.4 | text-secondary 9.4 | text-muted 5.7
+ *          text-subtle 5.7 | accent 5.8 | on-accent/accent-solid 5.2
+ *          success 8.4 | warning 8.8 | danger 5.3
+ *          deal: 8.4 / 9.3 / 8.8 / 5.7 / 5.3
+ *
+ * Note: the deal-tier and success/danger text colors are slightly darker
+ * (light mode) than the original palette (#22c55e -> #15803d etc.) because
+ * the originals failed AA as text on white (e.g. #22c55e was 2.3:1).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --color-bg: #f8fafc;             /* page background */
+  --color-bg-translucent: rgba(248, 250, 252, 0.93); /* sticky header over content */
+  --color-surface: #ffffff;        /* cards, tables, panels */
+  --color-surface-subtle: #f1f5f9; /* hover rows, input/select backgrounds */
+  --color-grid: rgba(148, 163, 184, 0.09); /* decorative background grid lines */
+  --shadow-card: 0 4px 24px rgba(15, 23, 42, 0.04); /* elevated cards */
+
+  /* Text */
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;     /* labels, hints */
+  --color-text-subtle: #64748b;    /* placeholders, separators (was #94a3b8, failed AA) */
+  --color-text-inverse: #f8fafc;   /* text on inverse/dark surfaces */
+
+  /* Borders */
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;  /* scrollbar thumbs, emphasized dividers */
+
+  /* Accent (brand blue) */
+  --color-accent: #2563eb;         /* links, logo, highlighted text */
+  --color-accent-solid: #2563eb;   /* filled buttons */
+  --color-accent-solid-hover: #1d4ed8;
+  --color-accent-subtle: rgba(37, 99, 235, 0.20); /* selected-row ring/tint */
+  --color-on-accent: #ffffff;      /* text on accent-solid */
+
+  /* Status */
+  --color-success: #15803d;        /* positive savings text */
+  --color-warning: #b45309;
+  --color-danger: #dc2626;         /* negative savings, accidents */
+  --color-danger-surface: #fef2f2; /* error banner background */
+  --color-danger-strong: #991b1b;  /* error banner text */
+
+  /* Deal score tiers (data viz — used for star ratings and score text) */
+  --color-deal-excellent: #15803d; /* 5 stars */
+  --color-deal-good: #4d7c0f;      /* 4 stars */
+  --color-deal-fair: #b45309;      /* 3 stars */
+  --color-deal-poor: #64748b;      /* 2 stars */
+  --color-deal-bad: #dc2626;       /* 1 star  */
+
+  /* Misc */
+  --color-loading: #ff6b2b;        /* spinner dots (decorative) */
+}
+
+html.theme-dark {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --color-bg: #0f172a;
+  --color-bg-translucent: rgba(15, 23, 42, 0.93);
+  --color-surface: #1e293b;
+  --color-surface-subtle: #334155;
+  --color-grid: rgba(148, 163, 184, 0.06);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.45);
+
+  /* Text */
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
+  --color-text-subtle: #94a3b8;
+  --color-text-inverse: #0f172a;
+
+  /* Borders */
+  --color-border: #334155;
+  --color-border-strong: #475569;
+
+  /* Accent */
+  --color-accent: #60a5fa;
+  --color-accent-solid: #2563eb;
+  --color-accent-solid-hover: #1d4ed8;
+  --color-accent-subtle: rgba(96, 165, 250, 0.30);
+  --color-on-accent: #ffffff;
+
+  /* Status */
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-danger-surface: #450a0a;
+  --color-danger-strong: #fca5a5;
+
+  /* Deal score tiers */
+  --color-deal-excellent: #4ade80;
+  --color-deal-good: #a3e635;
+  --color-deal-fair: #fbbf24;
+  --color-deal-poor: #94a3b8;
+  --color-deal-bad: #f87171;
+
+  /* Misc */
+  --color-loading: #ff6b2b;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+}
