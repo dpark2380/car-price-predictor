@@ -4,7 +4,7 @@ Run: PYTHONPATH=. python3 scripts/model_sanity_check.py
 """
 import numpy as np
 import pandas as pd
-from ml.pipeline import load, _build_features_raw
+from ml.pipeline import load, _build_features_raw, _apply_cohort_features
 
 payload = load()
 if payload is None:
@@ -13,6 +13,7 @@ if payload is None:
 
 model = payload["model"]
 log_cal = payload.get("log_calibration", 0.0)
+cohort_stats = payload.get("cohort_stats")
 print(f"Model version: {payload['version']}")
 print(f"Selected model: {payload['selected_model']}")
 print(f"Log calibration: {log_cal:.4f}\n")
@@ -22,11 +23,12 @@ def predict(make, model_name, year, mileage, body_type="sedan", trim=""):
         "make": make, "model": model_name, "year": year, "mileage": mileage,
         "body_type": body_type, "trim": trim,
         "price": 99999,  # dummy, not used in prediction
-        "accident_count": 0, "owner_count": 1,
         "location_state": "", "location_zip": "",
     }
     df = pd.DataFrame([row])
     X = _build_features_raw(df)
+    if cohort_stats is not None:
+        X = _apply_cohort_features(X, cohort_stats)
     pred = float(np.expm1(model.predict(X)[0] - log_cal))
     return pred
 

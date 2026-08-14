@@ -109,9 +109,6 @@ def deals():
             else:
                 df = df[bt.str.lower().str.contains(body_q, na=False)]
 
-        # Apply min_score again after filters (defensive)
-        df = df[df["deal_score"].fillna(-1) >= min_score]
-
         # Best-first
         df = df.sort_values("deal_score", ascending=False).head(limit)
 

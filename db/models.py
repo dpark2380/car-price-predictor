@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float,
-    Boolean, DateTime, Text, Index, UniqueConstraint
+    Boolean, DateTime, Text, Index
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -64,20 +64,6 @@ class PopularitySnapshot(Base):
     avg_mileage     = Column(Float)
     avg_days_listed = Column(Float)
     sold_last_7d    = Column(Integer, default=0)
-
-class SalesStatsCache(Base):
-    __tablename__ = "sales_stats_cache"
-    id                 = Column(Integer, primary_key=True, autoincrement=True)
-    make               = Column(String, nullable=False)
-    state              = Column(String, nullable=False)  # "CA", "WA", "national"
-    median_price       = Column(Float)
-    trimmed_mean_price = Column(Float)
-    median_dom         = Column(Float)
-    sample_count       = Column(Integer)
-    fetched_at         = Column(DateTime, default=datetime.utcnow)
-    __table_args__ = (
-        UniqueConstraint("make", "state", name="uq_sales_cache_make_state"),
-    )
 
 
 DB_PATH = "sqlite:///car_intel.db"

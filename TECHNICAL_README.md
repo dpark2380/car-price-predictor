@@ -611,25 +611,29 @@ The cap finds the minimum additional regularisation beyond lambda_min that produ
 | 2026-04-27 | ~7,000 | XGB (hardcoded params) | $2,866–3,107 | Grid search lost in stash ops |
 | 2026-04-28 | 6,982 | XGB grid search + early stop | $2,864 | Grid search restored, n=796 |
 | 2026-04-28 | 6,982 | Relaxed LASSO (144 features) | $4,138 | Interpretability candidate |
-| 2026-04-30 | 7,410 | XGB grid search + early stop | **$2,786** | Best result to date, n=1,329 |
+| 2026-04-30 | 7,410 | XGB grid search + early stop | $2,786 | Prior best |
 | 2026-04-30 | 7,415 | XGB grid search + early stop | $2,966 | 429 rate limit hit trucks/SUVs mid-run |
+| 2026-06-17 | 11,457 | XGB grid search + early stop | **$2,753** | Best result to date, n=1,439; lr=0.15. Per-tier: <$10k $1,513 / $10-20k $1,955 / $20-35k $2,147 / $35-60k $3,771 / >$60k $8,250 |
 
 ---
 
 ## 16. Limitations
 
-### 16.1 What $2,786 MAE Actually Means in Practice
+### 16.1 What $2,753 MAE Actually Means in Practice
 
-MAE measures the average absolute dollar error across the test set. In isolation this number looks acceptable, but it is heteroscedastic — the error is not uniform across price tiers:
+MAE measures the average absolute dollar error across the test set. In isolation this number looks acceptable, but it is heteroscedastic — the error is not uniform across price tiers. The figures below are the **actual per-tier MAE** measured on the held-out test set (run `20260617_0328`, 2,292 test rows), not the overall MAE divided by tier price:
 
-| Price tier | MAE | Error as % of price |
-|---|---|---|
-| $10,000 car | ~$2,786 | ~28% |
-| $20,000 car | ~$2,786 | ~14% |
-| $35,000 car | ~$2,786 | ~8% |
-| $60,000 car | ~$2,786 | ~5% |
+| Price tier | Test MAE | Error as % of tier price | Test n |
+|---|---|---|---|
+| <$10k | $1,513 | ~20% | 306 |
+| $10–20k | $1,955 | ~12% | 559 |
+| $20–35k | $2,147 | ~8% | 789 |
+| $35–60k | $3,771 | ~8% | 492 |
+| >$60k | $8,250 | ~11% | 146 |
 
-For a $12,000 economy car, a $2,786 error means the model might predict $9,200 or $14,800 — both plausible to a human but the difference changes whether the car looks like a deal. For a $45,000 luxury SUV the same absolute error is less consequential. The model works better at the top of the price range than the bottom.
+The error in **dollars** rises monotonically with price (cheap cars are easy to value to within a couple thousand; a $90k car is not). But the error as a **percentage of price** is U-shaped: worst at the bottom (~20% on sub-$10k cars, where a few thousand dollars is a large fraction of the price) and at the very top (~11% on >$60k, where cohorts are sparse and options/condition dominate), and best in the **mainstream $20–60k band at ~8%**. The model is most reliable exactly where most of the inventory sits.
+
+Note: it is tempting to quote the overall MAE ($2,753) against every tier — e.g. "$2,753 / $20,000 ≈ 14%." That is wrong. The model does not make a flat $2,753 error in the $20–35k band; it makes ~$2,147 there (8%). Always quote the per-tier MAE, not the overall MAE rescaled.
 
 Additionally, MAE is measured on a held-out test set of ~1,400 listings — a single 80/20 split. The variance between runs on the same dataset is $150–400 depending on which listings land in the test set. The "true" generalization error is a distribution, not a single number.
 
@@ -706,14 +710,14 @@ A listing flagged as "overpriced" may simply be priced for a market the model wa
 All reported MAE figures come from a single 80/20 split with `random_state=42`. The variance between runs on the same dataset — purely from which listings land in the test set — is $150–400 in MAE. This means:
 
 - The difference between a $2,786 run and a $2,966 run on the same day (April 30) is partly real (different dataset from the 429 rate limit) and partly split noise
-- Reported MAE should be interpreted as "approximately $2,800–3,000" not as a precise figure
+- Reported MAE should be interpreted as "approximately $2,700–3,000" not as a precise figure
 - Cross-validation of the final model (not just the grid search) would give a more reliable estimate
 
 ---
 
 ### 16.7 Deal Score Reliability
 
-The deal score maps the gap between predicted and actual price to a 0–100 scale. Given the model's MAE of ~$2,786, a car priced exactly at market value (true score = 50) could be predicted anywhere from roughly 40–60.
+The deal score maps the gap between predicted and actual price to a 0–100 scale. Given the model's MAE of ~$2,753, a car priced exactly at market value (true score = 50) could be predicted anywhere from roughly 40–60.
 
 **Practical implication:** the deal score is most reliable at the extremes. A score of 85+ genuinely indicates an unusually good deal; a score of 15 or lower genuinely indicates an overpriced listing. Scores in the 40–60 range ("fair price") should be treated as noise — the model cannot reliably distinguish "exactly at market" from "slightly above or below market" given its current error level.
 

@@ -4,11 +4,22 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#f8fafc" />
     <meta
       name="description"
-      content="Web site created using create-react-app"
+      content="CarIntel — used car deal finder and price predictor"
     />
+    <!--
+      Restore saved theme before first paint to avoid a flash of the wrong
+      theme. Pure progressive enhancement: with JS disabled (or no saved
+      preference) the page renders the default light theme via CSS alone.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem("carintel-theme");
+        if (t && t !== "light") document.documentElement.classList.add("theme-" + t);
+      } catch (e) {}
+    </script>
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <!--
       manifest.json provides metadata used when your web app is installed on a
