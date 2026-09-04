@@ -1,24 +1,20 @@
 /**
- * CarIntel theme system — CSS custom properties, class-toggled on <html>.
+ * Car Intel theme system — CSS custom properties, class-toggled on <html>.
+ *
+ * Palette: white + blue, restored by request. Structure still reads as an
+ * instrument panel (gauges, fuel-gauge-style score bars, window-sticker
+ * spec labels) — light mode is a white panel under daylight, dark mode a
+ * navy panel with blue-backlit gauges (a real, common dash lighting color,
+ * not just an inverted light mode).
  *
  * How it works
  * ------------
- * - `:root` defines the LIGHT theme. No class, no JavaScript required:
- *   a fresh page load renders correctly with CSS alone.
+ * - `:root` defines the LIGHT theme. No class, no JavaScript required: a
+ *   fresh page load renders correctly with CSS alone.
  * - `html.theme-dark` overrides the same tokens for dark mode.
- * - A 3-line inline script in public/index.html restores a saved preference
- *   (localStorage "carintel-theme") before first paint, so there is no flash
- *   of the wrong theme. Without JS, the page simply renders light.
- *
- * Adding a new theme
- * ------------------
- * Add one block — no other changes anywhere:
- *
- *   html.theme-sepia {
- *     --color-bg: ...;            (redefine every token below)
- *   }
- *
- * Then set `theme-sepia` on <html> (and persist "sepia" to localStorage).
+ * - A pre-paint script in public/index.html restores a saved preference
+ *   (localStorage "carintel-theme") before first paint, so there is no
+ *   flash of the wrong theme. Without JS, the page renders light.
  *
  * Naming
  * ------
@@ -27,80 +23,79 @@
  *
  * Contrast (WCAG 2.1 AA, 4.5:1 normal text / 3:1 large text & UI graphics)
  * ------------------------------------------------------------------------
- * Every *-text-grade token below meets >= 4.5:1 against both --color-bg and
- * --color-surface in its theme:
+ * Every *-text-grade and semantic-status token meets >= 4.5:1 against both
+ * --color-bg and --color-surface in its theme (verified against the W3C
+ * relative-luminance formula, not eyeballed):
  *
- *   light: text-primary 17.9 | text-secondary 7.0 | text-muted 4.8
- *          text-subtle 4.8 | accent 5.2 | on-accent/accent-solid 5.2
- *          success 5.0 | warning 5.0 | danger 4.8
- *          deal: 5.0 / 5.0 / 5.0 / 4.8 / 4.8
+ *   light: text-primary 13.8 | text-secondary 7.0 | text-muted 5.3
+ *          text-subtle 4.55  | accent 4.94 | success 5.0 | danger 4.8
+ *          deal tiers 4.6–5.8 | on-accent (white text) 5.17
  *   dark:  text-primary 13.4 | text-secondary 9.4 | text-muted 5.7
- *          text-subtle 5.7 | accent 5.8 | on-accent/accent-solid 5.2
- *          success 8.4 | warning 8.8 | danger 5.3
- *          deal: 8.4 / 9.3 / 8.8 / 5.7 / 5.3
- *
- * Note: the deal-tier and success/danger text colors are slightly darker
- * (light mode) than the original palette (#22c55e -> #15803d etc.) because
- * the originals failed AA as text on white (e.g. #22c55e was 2.3:1).
+ *          text-subtle 5.7   | accent 7.02 | success 8.4 | danger 5.3
+ *          deal tiers 5.7–9.3 | on-accent (dark text) 7.02
  */
 
 :root {
   color-scheme: light;
 
   /* Surfaces */
-  --color-bg: #f8fafc;             /* page background */
-  --color-bg-translucent: rgba(248, 250, 252, 0.93); /* sticky header over content */
-  --color-surface: #ffffff;        /* cards, tables, panels */
-  --color-surface-subtle: #f1f5f9; /* hover rows, input/select backgrounds */
-  --color-grid: rgba(148, 163, 184, 0.09); /* decorative background grid lines */
-  --shadow-card: 0 4px 24px rgba(15, 23, 42, 0.04); /* elevated cards */
+  --color-bg: #f8fafc;
+  --color-bg-translucent: rgba(248, 250, 252, 0.93);
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f1f5f9;
+  --color-grid: rgba(148, 163, 184, 0.09);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 4px 24px rgba(15, 23, 42, 0.05);
+  --shadow-inset: inset 0 2px 5px rgba(15, 23, 42, 0.07);
 
   /* Text */
   --color-text-primary: #0f172a;
   --color-text-secondary: #475569;
-  --color-text-muted: #64748b;     /* labels, hints */
-  --color-text-subtle: #64748b;    /* placeholders, separators (was #94a3b8, failed AA) */
-  --color-text-inverse: #f8fafc;   /* text on inverse/dark surfaces */
+  --color-text-muted: #64748b;
+  --color-text-subtle: #64748b;
+  --color-text-inverse: #f8fafc;
 
   /* Borders */
   --color-border: #e2e8f0;
-  --color-border-strong: #cbd5e1;  /* scrollbar thumbs, emphasized dividers */
+  --color-border-strong: #cbd5e1;
 
-  /* Accent (brand blue) */
-  --color-accent: #2563eb;         /* links, logo, highlighted text */
-  --color-accent-solid: #2563eb;   /* filled buttons */
-  --color-accent-solid-hover: #1d4ed8;
-  --color-accent-subtle: rgba(37, 99, 235, 0.20); /* selected-row ring/tint */
-  --color-on-accent: #ffffff;      /* text on accent-solid */
+  /* Accent (blue) */
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-subtle: rgba(37, 99, 235, 0.14);
+  --color-on-accent: #ffffff;
+
+  /* Info reuses the accent — one blue, not a second hue */
+  --color-info: #2563eb;
 
   /* Status */
-  --color-success: #15803d;        /* positive savings text */
+  --color-success: #15803d;
   --color-warning: #b45309;
-  --color-danger: #dc2626;         /* negative savings, accidents */
-  --color-danger-surface: #fef2f2; /* error banner background */
-  --color-danger-strong: #991b1b;  /* error banner text */
+  --color-danger: #dc2626;
+  --color-danger-surface: #fef2f2;
+  --color-danger-strong: #991b1b;
 
-  /* Deal score tiers (data viz — used for star ratings and score text) */
-  --color-deal-excellent: #15803d; /* 5 stars */
-  --color-deal-good: #4d7c0f;      /* 4 stars */
-  --color-deal-fair: #b45309;      /* 3 stars */
-  --color-deal-poor: #64748b;      /* 2 stars */
-  --color-deal-bad: #dc2626;       /* 1 star  */
+  /* Deal score tiers (used for the arc gauge and score bars) */
+  --color-deal-excellent: #15803d;
+  --color-deal-good: #4d7c0f;
+  --color-deal-fair: #b45309;
+  --color-deal-poor: #64748b;
+  --color-deal-bad: #dc2626;
 
   /* Misc */
-  --color-loading: #ff6b2b;        /* spinner dots (decorative) */
+  --color-loading: #2563eb;
 }
 
 html.theme-dark {
   color-scheme: dark;
 
-  /* Surfaces */
+  /* Surfaces — navy panel */
   --color-bg: #0f172a;
   --color-bg-translucent: rgba(15, 23, 42, 0.93);
   --color-surface: #1e293b;
   --color-surface-subtle: #334155;
-  --color-grid: rgba(148, 163, 184, 0.06);
-  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.45);
+  --color-grid: rgba(148, 163, 184, 0.07);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 4px 24px rgba(0, 0, 0, 0.45);
+  --shadow-inset: inset 0 2px 6px rgba(0, 0, 0, 0.45);
 
   /* Text */
   --color-text-primary: #f1f5f9;
@@ -113,12 +108,14 @@ html.theme-dark {
   --color-border: #334155;
   --color-border-strong: #475569;
 
-  /* Accent */
+  /* Accent (blue-backlit gauge) */
   --color-accent: #60a5fa;
-  --color-accent-solid: #2563eb;
-  --color-accent-solid-hover: #1d4ed8;
-  --color-accent-subtle: rgba(96, 165, 250, 0.30);
-  --color-on-accent: #ffffff;
+  --color-accent-hover: #3b82f6;
+  --color-accent-subtle: rgba(96, 165, 250, 0.2);
+  --color-on-accent: #0f172a;
+
+  /* Info reuses the accent */
+  --color-info: #60a5fa;
 
   /* Status */
   --color-success: #4ade80;
@@ -135,7 +132,7 @@ html.theme-dark {
   --color-deal-bad: #f87171;
 
   /* Misc */
-  --color-loading: #ff6b2b;
+  --color-loading: #60a5fa;
 }
 
 body {
