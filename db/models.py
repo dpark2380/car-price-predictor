@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float,
-    Boolean, DateTime, Text, Index
+    DateTime, Text, Index
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 

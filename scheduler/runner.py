@@ -15,9 +15,20 @@ from db.repository import ListingRepository, PredictionRepository, PopularityRep
 from scraper.data_ingest import DataIngestor
 from ml import pipeline
 
-from scraper.api_usage import get_calls_today
-
 LOGS_DIR = Path("logs")
+
+# See ListingRepository.mark_stale_inactive for why this is generous rather
+# than per-run: the scraper only re-confirms a rotating slice of inventory
+# each run, so "unseen for N days" needs headroom for that coverage cycle.
+#
+# Calibrated against this DB's actual last_seen distribution (2026-09-04):
+# a long gap in scraping means most rows haven't been re-confirmed in 90-165
+# days regardless of whether they're still for sale, so anything below ~165
+# would deactivate a large fraction of genuinely-active inventory on the
+# very next run. 180 is a deliberate no-op today (max observed gap is ~164
+# days) — it'll start catching real staleness only as fresh runs accumulate.
+# Safe to lower once last_seen ages reflect the now-working 36h cadence.
+INACTIVE_AFTER_DAYS = int(os.getenv("INACTIVE_AFTER_DAYS", 180))
 
 # ── Persistent run logging ────────────────────────────────────────────────────
 
@@ -105,16 +116,23 @@ def scrape_job(
             total_upd += upd
             target_names.append(name)
 
+    deactivated = repo.mark_stale_inactive(INACTIVE_AFTER_DAYS)
     total_active = repo.count_active()
-    logger.info(f"▶ Scrape job done | new={total_new} updated={total_upd} active={total_active}")
+    logger.info(
+        f"▶ Scrape job done | new={total_new} updated={total_upd} "
+        f"deactivated={deactivated} (unseen {INACTIVE_AFTER_DAYS}+ days) active={total_active}"
+    )
     log_scrape(total_new, total_upd, total_active, target_names)
 
 
 def score_job(repo: ListingRepository, pred_repo: PredictionRepository):
     logger.info("▶ Score job starting")
-    df = repo.get_active_listings_df()
+    # Includes recently-deactivated listings too, so predictions stay ready
+    # for them (e.g. if a listing gets re-seen and reactivated later) even
+    # though the live results endpoint only ever surfaces active ones.
+    df = repo.get_training_listings_df()
     if df.empty:
-        logger.warning("No active listings to score")
+        logger.warning("No listings to score")
         return
 
     predictions = pipeline.score_listings(df) or []
@@ -141,7 +159,10 @@ def popularity_job(repo: ListingRepository, pop_repo: PopularityRepository):
 def ml_train_job(repo: ListingRepository):
     logger.info("▶ ML train job starting")
 
-    df = repo.get_active_listings_df()
+    # Recently-delisted listings stay in the training set — their price/
+    # mileage/feature data is still real signal, only the live results
+    # endpoint excludes them. See ListingRepository.get_training_listings_df.
+    df = repo.get_training_listings_df()
     if df.empty:
         logger.warning("No data to train on")
         return

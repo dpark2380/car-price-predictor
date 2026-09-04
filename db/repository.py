@@ -83,24 +83,8 @@ class ListingRepository:
         logger.info(f"Upsert complete: {inserted} inserted, {updated} updated")
         return inserted, updated
 
-    def mark_inactive(self, scrape_source: str = "cars.com", older_than_hours: int = 48) -> int:
-        """Mark listings not seen in the last N hours as inactive (likely sold)."""
-        cutoff = datetime.utcnow() - timedelta(hours=older_than_hours)
-        count = (
-            self.session.query(CarListing)
-            .filter(
-                CarListing.scrape_source == scrape_source,
-                CarListing.last_seen < cutoff,
-                CarListing.is_active == True,  # noqa: E712
-            )
-            .update({"is_active": False})
-        )
-        self.session.commit()
-        logger.info(f"Marked {count} listings inactive")
-        return int(count or 0)
-
     def get_active_listings_df(self, min_price: float = 500) -> pd.DataFrame:
-        """Return all active listings as a DataFrame for ML training / dashboard."""
+        """Return all active listings as a DataFrame — for display endpoints."""
         query = (
             self.session.query(CarListing)
             .filter(
@@ -115,6 +99,55 @@ class ListingRepository:
             for r in query.all()
         ]
         return pd.DataFrame(rows)
+
+    def get_training_listings_df(self, min_price: float = 500, max_days_since_seen: int = 180) -> pd.DataFrame:
+        """
+        Active *and* recently-delisted listings, for ML training/scoring.
+
+        Unlike get_active_listings_df, this does not filter on is_active —
+        a delisted car's price/mileage/features are still real training
+        signal, so it stays in the model's dataset after mark_stale_inactive
+        excludes it from the live results. Bounded by last_seen so the
+        training set doesn't accumulate indefinitely-old rows that no
+        longer reflect current pricing.
+        """
+        cutoff = datetime.utcnow() - timedelta(days=max_days_since_seen)
+        query = (
+            self.session.query(CarListing)
+            .filter(
+                CarListing.price > min_price,
+                CarListing.year.isnot(None),
+                CarListing.mileage.isnot(None),
+                CarListing.last_seen >= cutoff,
+            )
+        )
+        rows = [
+            {c.name: getattr(r, c.name) for c in CarListing.__table__.columns}
+            for r in query.all()
+        ]
+        return pd.DataFrame(rows)
+
+    def mark_stale_inactive(self, stale_after_days: int = 180) -> int:
+        """
+        Mark listings we haven't re-confirmed in `stale_after_days` as
+        inactive. Returns the number of rows flipped.
+
+        Caveat: the scraper samples a rotating slice of zip codes and result
+        pages each run (see scraper/data_ingest.py), not the full live
+        inventory — a listing can legitimately go many runs without being
+        re-seen while still being for sale. "Not seen recently" is a
+        deliberately generous, approximate delisting signal, not a per-run
+        one. Tune via the INACTIVE_AFTER_DAYS env var if it's marking too
+        eagerly or too slowly for your scrape cadence/coverage.
+        """
+        cutoff = datetime.utcnow() - timedelta(days=stale_after_days)
+        updated = (
+            self.session.query(CarListing)
+            .filter(CarListing.is_active == True, CarListing.last_seen < cutoff)  # noqa: E712
+            .update({"is_active": 0}, synchronize_session=False)
+        )
+        self.session.commit()
+        return int(updated)
 
     def get_all_listings_df(self, days_back: int = 90) -> pd.DataFrame:
         """Return all listings (including inactive) from the last N days."""
@@ -221,9 +254,6 @@ class PopularityRepository:
             self.session.add(PopularitySnapshot(**snap))
         self.session.commit()
         logger.info(f"Saved popularity snapshot: {len(snapshots)} cohorts")
-
-    def get_latest_snapshot_date(self):
-        return self.session.query(func.max(PopularitySnapshot.snapshot_date)).scalar()
 
     def get_trending(self, top_n: int = 10) -> pd.DataFrame:
         """Return the currently most popular make/model combinations."""

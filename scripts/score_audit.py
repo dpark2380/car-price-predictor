@@ -2,7 +2,6 @@
 scripts/score_audit.py — Show score distribution and worst-scoring listings.
 Run: PYTHONPATH=. python3 scripts/score_audit.py
 """
-import pandas as pd
 from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository
 
