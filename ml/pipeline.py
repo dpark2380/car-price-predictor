@@ -13,13 +13,7 @@ from sklearn.inspection import permutation_importance
 from sklearn.base import BaseEstimator, RegressorMixin, clone
 
 
-try:
-    from xgboost import XGBRegressor
-    HAS_XGB = True
-except ImportError:
-    HAS_XGB = False
-    logger.warning("XGBoost not installed — using sklearn fallback")
-    from sklearn.ensemble import GradientBoostingRegressor
+from xgboost import XGBRegressor
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -303,7 +297,6 @@ def _kfold_cohort_encode(
     cohort_count  = np.zeros(len(X))
 
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    arr_y = y.to_numpy()
 
     for train_idx, val_idx in kf.split(X):
         fold_stats = _compute_cohort_stats(X.iloc[train_idx], y.iloc[train_idx])
@@ -417,99 +410,84 @@ def train(df: pd.DataFrame) -> dict | None:
         ),
     }
 
-    if HAS_XGB:
-        # Joint grid search over M (n_estimators) and eta (learning_rate).
-        # These two are not independent: small eta needs many trees to converge,
-        # large eta converges faster but may overshoot. Searching them jointly
-        # finds the true optimum rather than two separate marginal optima.
-        _base_xgb = XGBRegressor(
-            max_depth=6,
-            subsample=0.8,
-            colsample_bytree=0.7,
-            min_child_weight=3,
-            gamma=0.05,
-            reg_alpha=0.05,
-            reg_lambda=1.0,
-            random_state=42,
-            verbosity=0,
-            objective="reg:absoluteerror",
-        )
-        _gs_pipe = Pipeline(steps=[
-            ("preprocess", preprocess),
-            ("model", _base_xgb),
-        ])
-        _param_grid = {
-            "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15, 0.2],
-            "model__n_estimators":  [500, 1000, 1500, 2000],
-        }
-        logger.info("Running XGB grid search (6×4 grid, 5-fold CV = 120 fits)…")
-        _gs = GridSearchCV(
-            _gs_pipe,
-            _param_grid,
-            cv=5,
-            scoring="neg_mean_absolute_error",
-            n_jobs=-1,
-            refit=False,
-            verbose=0,
-        )
-        _gs.fit(X_train, y_train_log)
-        _best = _gs.best_params_
-        logger.info(
-            f"XGB grid search best: learning_rate={_best['model__learning_rate']}, "
-            f"n_estimators={_best['model__n_estimators']}  "
-            f"(CV MAE log={-_gs.best_score_:.4f})"
-        )
+    # Fixed hyperparameters shared by every XGBRegressor built below —
+    # only n_estimators/learning_rate/early-stopping args vary between them.
+    xgb_fixed_params = dict(
+        max_depth=6,
+        subsample=0.8,
+        colsample_bytree=0.7,
+        min_child_weight=3,
+        gamma=0.05,
+        reg_alpha=0.05,
+        reg_lambda=1.0,
+        random_state=42,
+        verbosity=0,
+        objective="reg:absoluteerror",
+    )
 
-        # Early stopping: find the true optimal n_estimators given the best lr.
-        # The grid search ceiling (2000) may be too low or higher than needed —
-        # early stopping on a held-out slice tells us exactly when to stop.
-        _X_tr_es, _X_val_es, _y_tr_es, _y_val_es = train_test_split(
-            X_train, y_train_log, test_size=0.15, random_state=0
-        )
-        _pre_es = clone(preprocess)
-        _pre_es.fit(X_train)  # fit on full X_train so OHE sees all categories
-        _xgb_es = XGBRegressor(
-            n_estimators=3000,
-            learning_rate=_best["model__learning_rate"],
-            max_depth=6,
-            subsample=0.8,
-            colsample_bytree=0.7,
-            min_child_weight=3,
-            gamma=0.05,
-            reg_alpha=0.05,
-            reg_lambda=1.0,
-            random_state=42,
-            verbosity=0,
-            objective="reg:absoluteerror",
-            early_stopping_rounds=50,
-            eval_metric="mae",
-        )
-        _xgb_es.fit(
-            _pre_es.transform(_X_tr_es),
-            _y_tr_es,
-            eval_set=[(_pre_es.transform(_X_val_es), _y_val_es)],
-            verbose=False,
-        )
-        _optimal_n = _xgb_es.best_iteration
-        logger.info(
-            f"Early stopping: optimal n_estimators={_optimal_n} "
-            f"(ceiling=3000, grid search suggested {_best['model__n_estimators']})"
-        )
+    # Joint grid search over M (n_estimators) and eta (learning_rate).
+    # These two are not independent: small eta needs many trees to converge,
+    # large eta converges faster but may overshoot. Searching them jointly
+    # finds the true optimum rather than two separate marginal optima.
+    base_xgb = XGBRegressor(**xgb_fixed_params)
+    gs_pipe = Pipeline(steps=[
+        ("preprocess", preprocess),
+        ("model", base_xgb),
+    ])
+    param_grid = {
+        "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15, 0.2],
+        "model__n_estimators":  [500, 1000, 1500, 2000],
+    }
+    logger.info("Running XGB grid search (6×4 grid, 5-fold CV = 120 fits)…")
+    grid_search = GridSearchCV(
+        gs_pipe,
+        param_grid,
+        cv=5,
+        scoring="neg_mean_absolute_error",
+        n_jobs=-1,
+        refit=False,
+        verbose=0,
+    )
+    grid_search.fit(X_train, y_train_log)
+    best_params = grid_search.best_params_
+    logger.info(
+        f"XGB grid search best: learning_rate={best_params['model__learning_rate']}, "
+        f"n_estimators={best_params['model__n_estimators']}  "
+        f"(CV MAE log={-grid_search.best_score_:.4f})"
+    )
 
-        candidates["xgb"] = XGBRegressor(
-            n_estimators=_optimal_n,
-            learning_rate=_best["model__learning_rate"],
-            max_depth=6,
-            subsample=0.8,
-            colsample_bytree=0.7,
-            min_child_weight=3,
-            gamma=0.05,
-            reg_alpha=0.05,
-            reg_lambda=1.0,
-            random_state=42,
-            verbosity=0,
-            objective="reg:absoluteerror",
-        )
+    # Early stopping: find the true optimal n_estimators given the best lr.
+    # The grid search ceiling (2000) may be too low or higher than needed —
+    # early stopping on a held-out slice tells us exactly when to stop.
+    X_tr_es, X_val_es, y_tr_es, y_val_es = train_test_split(
+        X_train, y_train_log, test_size=0.15, random_state=0
+    )
+    pre_es = clone(preprocess)
+    pre_es.fit(X_train)  # fit on full X_train so OHE sees all categories
+    xgb_es = XGBRegressor(
+        n_estimators=3000,
+        learning_rate=best_params["model__learning_rate"],
+        **xgb_fixed_params,
+        early_stopping_rounds=50,
+        eval_metric="mae",
+    )
+    xgb_es.fit(
+        pre_es.transform(X_tr_es),
+        y_tr_es,
+        eval_set=[(pre_es.transform(X_val_es), y_val_es)],
+        verbose=False,
+    )
+    optimal_n = xgb_es.best_iteration
+    logger.info(
+        f"Early stopping: optimal n_estimators={optimal_n} "
+        f"(ceiling=3000, grid search suggested {best_params['model__n_estimators']})"
+    )
+
+    candidates["xgb"] = XGBRegressor(
+        n_estimators=optimal_n,
+        learning_rate=best_params["model__learning_rate"],
+        **xgb_fixed_params,
+    )
 
     def _eval(y_true_np: np.ndarray, y_pred_np: np.ndarray) -> tuple[float, float]:
         mae = float(mean_absolute_error(y_true_np, y_pred_np))
@@ -693,8 +671,8 @@ def train(df: pd.DataFrame) -> dict | None:
     logger.info(f"Train/Test split: {len(X_train)}/{len(X_test)}")
     logger.info("="*72 + "\n")
 
-    xgb_lr = candidates["xgb"].learning_rate if "xgb" in candidates else None
-    xgb_n  = candidates["xgb"].n_estimators  if "xgb" in candidates else None
+    xgb_lr = candidates["xgb"].learning_rate
+    xgb_n  = candidates["xgb"].n_estimators
 
     return {
         "version":        version,

@@ -80,22 +80,3 @@ def increment_call(event: ApiCallEvent, n: int = 1) -> None:
     day_obj["endpoints"][ep] = int(day_obj["endpoints"].get(ep, 0)) + n
 
     _atomic_write(USAGE_PATH, usage)
-
-
-def get_calls_today(provider: str | None = None) -> int:
-    usage = _read_usage()
-    day = _today_key()
-    day_obj = usage.get("days", {}).get(day, {})
-    if not provider:
-        return int(day_obj.get("total", 0))
-    return int(day_obj.get("providers", {}).get(provider.lower().strip(), 0))
-
-
-def get_calls_total(provider: str | None = None) -> int:
-    usage = _read_usage()
-    if not provider:
-        return int(usage.get("total", 0))
-    total = 0
-    for day_obj in usage.get("days", {}).values():
-        total += int(day_obj.get("providers", {}).get(provider.lower().strip(), 0))
-    return total
