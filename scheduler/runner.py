@@ -14,6 +14,7 @@ from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 from scraper.data_ingest import DataIngestor
 from ml import pipeline
+from env_utils import env_int
 
 LOGS_DIR = Path("logs")
 
@@ -28,7 +29,7 @@ LOGS_DIR = Path("logs")
 # very next run. 180 is a deliberate no-op today (max observed gap is ~164
 # days) — it'll start catching real staleness only as fresh runs accumulate.
 # Safe to lower once last_seen ages reflect the now-working 36h cadence.
-INACTIVE_AFTER_DAYS = int(os.getenv("INACTIVE_AFTER_DAYS", 180))
+INACTIVE_AFTER_DAYS = env_int("INACTIVE_AFTER_DAYS", 180)
 
 # ── Persistent run logging ────────────────────────────────────────────────────
 
