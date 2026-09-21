@@ -4,25 +4,29 @@ __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 *.log
 
-# Local DB / models (car_intel.db and models/ are committed for deployment)
-*.sqlite
+# Local DB / models / experiment artifacts (not committed: contains
+# Marketcheck listing data / is derived from it, or is a scratch experiment)
 *.db
-!car_intel.db
+*.sqlite
+models/*.joblib
+logs/
+onnx_export_test/
 
 # Frontend
 frontend/node_modules/
 frontend/build/
 frontend/.env
 frontend/.env.*
+!frontend/.env.example
 
 # OS
-.DS_Storedata/api_usage.json
+.DS_Store
+data/api_usage.json
 data/page_cursor.json
 data/zip_cursor.json
 data/main_zip_cursor.json
 data/cursors/
-data/cursors/
-data/main_zip_cursor.json
 data
