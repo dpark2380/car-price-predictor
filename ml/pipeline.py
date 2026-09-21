@@ -20,6 +20,8 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 
+from env_utils import env_int
+
 class RelaxedLasso(BaseEstimator, RegressorMixin):
     """
     Two-step Relaxed LASSO (mirrors the R notes workflow):
@@ -136,10 +138,10 @@ class RelaxedLasso(BaseEstimator, RegressorMixin):
 
 
 MODEL_PATH = "models/price_predictor.joblib"
-MIN_TRAINING_SAMPLES = int(os.getenv("MIN_TRAINING_SAMPLES", 140))
+MIN_TRAINING_SAMPLES = env_int("MIN_TRAINING_SAMPLES", 140)
 # Listings on market longer than this (Marketcheck `dom`) are excluded from
 # training — their asking price is unreliable as a market signal.
-STALE_LISTING_MAX_DAYS = int(os.getenv("STALE_LISTING_MAX_DAYS", 365))
+STALE_LISTING_MAX_DAYS = env_int("STALE_LISTING_MAX_DAYS", 365)
 TRIM_RANKINGS_PATH = "config/trim_rankings.json"
 
 import json as _json

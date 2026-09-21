@@ -14,12 +14,13 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from scraper.api_usage import increment_call, ApiCallEvent
+from env_utils import env_int
 
 load_dotenv()
 
 API_KEY = os.getenv("MARKETCHECK_API_KEY", "")
 ZIP     = os.getenv("MARKETCHECK_ZIP", "94119")   # Fallback if zip rotation is disabled
-RADIUS  = int(os.getenv("MARKETCHECK_RADIUS", 100))
+RADIUS  = env_int("MARKETCHECK_RADIUS", 100)
 BASE    = "https://mc-api.marketcheck.com/v2"
 
 CURSORS_DIR      = Path("data/cursors")
