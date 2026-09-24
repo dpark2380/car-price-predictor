@@ -77,19 +77,31 @@ STALE_LISTING_MAX_DAYS = env_int("STALE_LISTING_MAX_DAYS", 365)
 TRAINING_WINDOW_DAYS = 180
 
 # The single definition of which rows the model trains on.
-# training_pool_v: value filters only, so scripts/holdout_audit.py can apply
-# the recency window as of a past training time. training_listings_v: the
-# pool plus the rolling last_seen window — what train() consumes.
+# training_pool_v: value filters + one row per VIN, so scripts/holdout_audit.py
+# can apply the recency window as of a past training time. training_listings_v:
+# the pool plus the rolling last_seen window — what train() consumes.
+#
+# Dealers re-list the same car under a new Marketcheck id (usually after a
+# price cut), so one VIN can hold several near-identical rows; keeping them
+# all leaks test cars into training. Keep the latest valid snapshot per VIN
+# (ties -> newest id); rows without a VIN count as their own car.
 VIEWS = {
     "training_pool_v": f"""
         CREATE VIEW training_pool_v AS
-        SELECT * FROM car_listings
-        WHERE price BETWEEN 3000 AND 100000
-          AND mileage BETWEEN 0 AND 400000
-          AND COALESCE(days_listed, 0) <= {STALE_LISTING_MAX_DAYS}
-          AND year IS NOT NULL
-          AND make IS NOT NULL
-          AND model IS NOT NULL""",
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY COALESCE(NULLIF(vin, ''), 'listing:' || listing_id)
+                ORDER BY last_seen DESC, id DESC
+            ) AS vin_rank
+            FROM car_listings
+            WHERE price BETWEEN 3000 AND 100000
+              AND mileage BETWEEN 0 AND 400000
+              AND COALESCE(days_listed, 0) <= {STALE_LISTING_MAX_DAYS}
+              AND year IS NOT NULL
+              AND make IS NOT NULL
+              AND model IS NOT NULL
+        )
+        WHERE vin_rank = 1""",
     "training_listings_v": f"""
         CREATE VIEW training_listings_v AS
         SELECT * FROM training_pool_v

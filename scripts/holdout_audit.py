@@ -4,7 +4,7 @@ rates for the saved model. Read-only.
 
 Run: PYTHONPATH=. python3 scripts/holdout_audit.py [--candidates]
 
-Reproduces ml/pipeline.py train()'s input + 80/20 split *as of the model's
+Reproduces ml/pipeline.py train()'s input + VIN-grouped 80/20 split *as of the model's
 training time*: reads training_pool_v and re-applies the last_seen window at
 trained_at (training_listings_v's window rolls with 'now', so re-running the
 split "now" silently mixes training rows into the test set). Asserts the
@@ -13,11 +13,10 @@ reproduced cohort stats equal the saved ones.
 """
 import json, sys, warnings
 import numpy as np, pandas as pd, joblib
-from sklearn.model_selection import train_test_split
 from sqlalchemy import text
 from db.models import init_db, get_session, TRAINING_WINDOW_DAYS
 from db.repository import ListingRepository
-from ml.pipeline import (MODEL_PATH, _build_features_raw,
+from ml.pipeline import (MODEL_PATH, _build_features_raw, _vin_split,
                          _kfold_cohort_encode, _apply_cohort_features, _deal_score_from_prices)
 warnings.filterwarnings("ignore")
 
@@ -46,9 +45,8 @@ def main(candidates: bool) -> dict:
     price_all = pd.read_sql(text("select price from car_listings where price > 500 and year is not null "
                                  "and mileage is not null and last_seen >= :cutoff"), con, params=cutoff).price.to_numpy()
 
-    # --- same split as train() ---
-    X_train, X_test, y_train, y_test = train_test_split(
-        _build_features_raw(df), df["price"], test_size=0.2, random_state=42)
+    # --- same VIN-grouped split as train() ---
+    X_train, X_test, y_train, y_test = _vin_split(_build_features_raw(df), df["price"], df)
     stats = ListingRepository(session).get_cohort_stats(df.loc[X_train.index, "id"])
     X_train_enc = _kfold_cohort_encode(X_train, y_train)
     if not stats.equals(payload["cohort_stats"]):
