@@ -15,7 +15,8 @@ import json, sys, warnings
 import numpy as np, pandas as pd, joblib
 from sklearn.model_selection import train_test_split
 from sqlalchemy import text
-from db.models import init_db, TRAINING_WINDOW_DAYS
+from db.models import init_db, get_session, TRAINING_WINDOW_DAYS
+from db.repository import ListingRepository
 from ml.pipeline import (MODEL_PATH, _build_features_raw,
                          _kfold_cohort_encode, _apply_cohort_features, _deal_score_from_prices)
 warnings.filterwarnings("ignore")
@@ -36,7 +37,8 @@ def main(candidates: bool) -> dict:
     model, cal = payload["model"], payload["log_calibration"]
     trained_at = pd.to_datetime(payload["version"], format="%Y%m%d_%H%M")  # UTC
 
-    con = init_db().connect()
+    session = get_session(init_db())
+    con = session.connection()
     cutoff = {"cutoff": str(trained_at - pd.Timedelta(days=TRAINING_WINDOW_DAYS))}
     df = pd.read_sql(text("select * from training_pool_v where last_seen >= :cutoff order by id"),
                      con, params=cutoff)
@@ -47,7 +49,8 @@ def main(candidates: bool) -> dict:
     # --- same split as train() ---
     X_train, X_test, y_train, y_test = train_test_split(
         _build_features_raw(df), df["price"], test_size=0.2, random_state=42)
-    X_train_enc, stats = _kfold_cohort_encode(X_train, y_train)
+    stats = ListingRepository(session).get_cohort_stats(df.loc[X_train.index, "id"])
+    X_train_enc = _kfold_cohort_encode(X_train, y_train)
     if not stats.equals(payload["cohort_stats"]):
         sys.exit("Split not reproduced: DB changed since the model was trained (retrain, or restore the DB).")
     X_test = _apply_cohort_features(X_test, stats)

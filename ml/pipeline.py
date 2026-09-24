@@ -277,9 +277,7 @@ def _apply_cohort_features(X: pd.DataFrame, cohort_stats: pd.DataFrame) -> pd.Da
     return X
 
 
-def _kfold_cohort_encode(
-    X: pd.DataFrame, y: pd.Series, n_splits: int = 5
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _kfold_cohort_encode(X: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> pd.DataFrame:
     """
     Compute cohort_median_price and cohort_count for each training row using
     k-fold target encoding to prevent leakage.
@@ -287,9 +285,8 @@ def _kfold_cohort_encode(
     For each row, the cohort median is computed from the other k-1 folds —
     so no row ever sees its own price when its cohort feature is computed.
 
-    Also returns full_cohort_stats (computed from all training data), which is
-    saved in the model payload and used at inference time (score_listings,
-    /api/predict) where there is no leakage concern.
+    The full (non-fold) cohort stats used at inference time come from SQL —
+    ListingRepository.get_cohort_stats.
     """
     X = X.copy()
     cohort_median = np.full(len(X), np.nan)
@@ -309,14 +306,12 @@ def _kfold_cohort_encode(
 
     X["cohort_median_price"] = cohort_median
     X["cohort_count"]        = cohort_count.astype(float)
-
-    # Full cohort stats for inference — saved in model payload
-    full_cohort_stats = _compute_cohort_stats(X.drop(columns=["cohort_median_price", "cohort_count"]), y)
-
-    return X, full_cohort_stats
+    return X
 
 
-def train(df: pd.DataFrame) -> dict | None:
+def train(df: pd.DataFrame, repo) -> dict | None:
+    """df: rows from ListingRepository.get_training_listings_df; repo: that
+    ListingRepository, used to compute cohort stats in SQL."""
     logger.info("Starting model training run…")
 
     # -----------------------------
@@ -337,8 +332,10 @@ def train(df: pd.DataFrame) -> dict | None:
         X_raw, y, test_size=0.2, random_state=42
     )
 
-    # K-fold cohort encoding — no leakage, full stats saved for inference
-    X_train, full_cohort_stats = _kfold_cohort_encode(X_train, y_train)
+    # Full cohort stats (SQL, training split only) are saved for inference;
+    # training rows get k-fold out-of-fold encoding — no leakage.
+    full_cohort_stats = repo.get_cohort_stats(df.loc[X_train.index, "id"])
+    X_train = _kfold_cohort_encode(X_train, y_train)
     X_test = _apply_cohort_features(X_test, full_cohort_stats)
 
     # log-space targets (this is what we train on)
