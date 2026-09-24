@@ -6,20 +6,43 @@ A used car market intelligence pipeline that ingests live listings from the Mark
 
 ## Results
 
-Four model families are trained on the same feature set and compared: **Linear Regression**, a custom **Relaxed Lasso** (LassoCV variable selection followed by unregularized OLS refit on the selected variables), **Random Forest**, and **XGBoost**. The candidate with the lowest MAE on a held-out test set is selected for deployment (`ml/pipeline.py:591-596`). XGBoost has won every training run in the logged history.
+Four model families are trained on the same feature set and compared: **Linear Regression**, a custom **Relaxed Lasso** (LassoCV variable selection followed by unregularized OLS refit on the selected variables), **Random Forest**, and **XGBoost**. The candidate with the lowest MAE on the held-out test set is selected for deployment (`ml/pipeline.py:583`). XGBoost has won every logged run except one (`2026-04-28 03:10`, Relaxed Lasso).
 
-**Evaluation setup** (`ml/pipeline.py:320-363`):
-- 80/20 train/test split, `random_state=42`
-- Target: `log1p(price)` (log-space regression), predictions converted back with `expm1` and a bias-correction offset (`log_calibration`) computed from the median training residual
+**Evaluation setup** (`ml/pipeline.py:325-354`):
+- Training rows come from the `training_listings_v` SQL view (`db/models.py`): price $3k--100k, mileage 0--400k, `days_listed` <= 365, last seen within 180 days, and **one row per VIN** (the latest snapshot). Dealers re-list the same car under a new listing id, usually after a price cut, so without this a test car's near-identical twin sits in the training set.
+- 80/20 train/test split **grouped by VIN** (`GroupShuffleSplit`, `random_state=42`), so no car appears on both sides
+- Target: `log1p(price)` (log-space regression), predictions converted back with `expm1` and a bias-correction offset (`log_calibration`) set to the median log residual on the **test** set (`ml/pipeline.py:595-596`)
 
-**Held-out test set error**, reproduced directly against the current saved model (`models/price_predictor.joblib`, version `20260915_0658`, test set n=2,250):
+**Held-out test set error** for model version `20260924_1527` (9,499 unique cars; test n=1,900), from `scripts/holdout_audit.py --candidates`:
 
-| Segment | Median absolute % error |
-|---|---|
-| Overall | 3.99% |
-| $20,000--35,000 (mainstream) | 2.87% |
+| Model | MAE | Median abs % error | Within ±10% |
+|---|---|---|---|
+| Linear | $5,659 | 14.3% | 36.3% |
+| Relaxed Lasso | $5,011 | 13.1% | 40.4% |
+| Random Forest | $3,881 | 9.0% | 52.4% |
+| **XGBoost (selected)** | **$3,678** | **8.9%** | **53.4%** |
 
-These numbers were computed by re-running the pipeline's exact train/test split against the live database and scoring the saved model on the resulting held-out rows, not read off a log file.
+| Price segment | Median abs % error | Share of scored listings |
+|---|---|---|
+| < $10k | 17.8% | 14.0% |
+| $10--20k | 10.6% | 22.7% |
+| $20--35k | 6.8% | 33.8% |
+| $35--60k | 7.5% | 21.9% |
+| > $60k | 9.5% | 7.6% |
+
+These are higher than the previously reported figures (XGBoost MAE $3,237, 7.6% median error). Those were inflated by duplicate VINs: 27.8% of the old test rows had the same car in training, typically priced within ~2.6%. On the old test set, the previous model scored MAE $2,555 on those leaked rows but $3,494 (9.3% median error) on clean ones, so the new numbers are the honest ones. Against that clean-row baseline, median error is slightly better (8.9% vs 9.3%) and MAE about $180 higher, consistent with training on 18% fewer rows.
+
+Caveats: this is a single split, and `TECHNICAL_README.md` puts split-to-split MAE noise at $150--400. The winner is chosen on the same test set it is reported on, so its figure is slightly optimistic. The script rebuilds the split as of the model's training time and asserts that it matches the saved cohort stats and logged MAE. Re-splitting the current database instead would leak training rows into the test set. That mistake produced the 3.99% figure this README previously reported. Numbers change after every scheduled retrain.
+
+**Serving latency**, from `scripts/latency_bench.py` on an Apple M5 laptop (localhost, one sequential client, Flask server as started by `start.py`):
+
+| Endpoint | p50 | p95 |
+|---|---|---|
+| `/api/predict` (live model inference) | 11.3 ms | 12.4 ms |
+| `/api/deals` (precomputed scores, limit=100) | 89 ms | 117 ms |
+| `/api/deals?limit=10000` (dashboard) | 377 ms | 390 ms |
+
+A full rescoring pass over 14,526 listings takes 0.2 s. Writing the scores to SQLite adds about 2 s.
 
 ---
 
@@ -80,7 +103,7 @@ score = 50 + diff_pct * 1.25
 score = clamp(score, 0, 100)
 ```
 
-A positive `diff_pct` (asking price under prediction) raises the score; a negative one lowers it. `+20%` under market maps to 100, `0%` maps to 50, `-20%` or worse maps to 0.
+A positive `diff_pct` (asking price under prediction) raises the score; a negative one lowers it. `0%` maps to 50, `+20%` under market maps to 75 (4 Stars), `+32%` to 90 (5 Stars), and `+40%` or more to 100. `-40%` or worse maps to 0.
 
 | Score | Label |
 |---|---|
@@ -125,7 +148,7 @@ npm start
 
 ### Scheduling
 
-In production, retraining is triggered by a macOS launchd job that is **not part of this repo** (`~/Library/LaunchAgents/com.danielpark.carpricepredictor.plist`), running `scheduler/runner.py --once` on a `StartInterval` of 129600 seconds (36 hours). Cron cannot express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical cron equivalent is a daily run:
+In production, retraining is triggered by a macOS launchd job that is **not part of this repo** (`~/Library/LaunchAgents/com.danielpark.carpricepredictor.plist`), running `scheduler/runner.py --once` on a `StartInterval` of 129600 seconds (36 hours). The job runs the repo's `venv/bin/python3`, so it needs the step-1 virtualenv to exist. Without it, launchd fails silently with exit code 78 (check with `launchctl print gui/$(id -u)/com.danielpark.carpricepredictor`). Cron cannot express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical cron equivalent is a daily run:
 
 ```cron
 # crontab -e — daily approximation of the launchd job (not an exact 36h match)
