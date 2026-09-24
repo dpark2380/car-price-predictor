@@ -4,16 +4,19 @@ rates for the saved model. Read-only.
 
 Run: PYTHONPATH=. python3 scripts/holdout_audit.py [--candidates]
 
-Reproduces ml/pipeline.py train()'s cleaning + 80/20 split *as of the model's
-training time* (get_training_listings_df's 180-day last_seen window rolls
-forward, so re-running the split "now" silently mixes training rows into the
-test set). Asserts the reproduced cohort stats equal the saved ones.
+Reproduces ml/pipeline.py train()'s input + 80/20 split *as of the model's
+training time*: reads training_pool_v and re-applies the last_seen window at
+trained_at (training_listings_v's window rolls with 'now', so re-running the
+split "now" silently mixes training rows into the test set). Asserts the
+reproduced cohort stats equal the saved ones.
 --candidates also refits linear / relaxed_lasso / rf on the same split.
 """
-import json, sqlite3, sys, warnings
+import json, sys, warnings
 import numpy as np, pandas as pd, joblib
 from sklearn.model_selection import train_test_split
-from ml.pipeline import (MODEL_PATH, STALE_LISTING_MAX_DAYS, _build_features_raw,
+from sqlalchemy import text
+from db.models import init_db, TRAINING_WINDOW_DAYS
+from ml.pipeline import (MODEL_PATH, _build_features_raw,
                          _kfold_cohort_encode, _apply_cohort_features, _deal_score_from_prices)
 warnings.filterwarnings("ignore")
 
@@ -33,15 +36,15 @@ def main(candidates: bool) -> dict:
     model, cal = payload["model"], payload["log_calibration"]
     trained_at = pd.to_datetime(payload["version"], format="%Y%m%d_%H%M")  # UTC
 
-    con = sqlite3.connect("car_intel.db")
-    raw = pd.read_sql("select * from car_listings", con, parse_dates=["last_seen"])
-    raw = raw[(raw.price > 500) & raw.year.notna() & raw.mileage.notna()
-              & (raw.last_seen >= trained_at - pd.Timedelta(days=180))]  # == score_job input
+    con = init_db().connect()
+    cutoff = {"cutoff": str(trained_at - pd.Timedelta(days=TRAINING_WINDOW_DAYS))}
+    df = pd.read_sql(text("select * from training_pool_v where last_seen >= :cutoff order by id"),
+                     con, params=cutoff)
+    # score_job's (looser) input as of training time, for segment shares
+    price_all = pd.read_sql(text("select price from car_listings where price > 500 and year is not null "
+                                 "and mileage is not null and last_seen >= :cutoff"), con, params=cutoff).price.to_numpy()
 
-    # --- same cleaning + split as train() ---
-    df = raw.dropna(subset=["price", "mileage", "year", "make", "model"]).copy()
-    df = df[df["price"].between(3_000, 100_000) & df["mileage"].between(0, 400_000)]
-    df = df[pd.to_numeric(df["days_listed"], errors="coerce").fillna(0) <= STALE_LISTING_MAX_DAYS]
+    # --- same split as train() ---
     X_train, X_test, y_train, y_test = train_test_split(
         _build_features_raw(df), df["price"], test_size=0.2, random_state=42)
     X_train_enc, stats = _kfold_cohort_encode(X_train, y_train)
@@ -57,7 +60,6 @@ def main(candidates: bool) -> dict:
            "mae_logged": round(payload["metrics"][payload["selected_model"]]["mae"], 2),
            "overall": err_stats(p, yt)}
 
-    price_all = raw.price.to_numpy()
     out["segments"] = {lab: err_stats(p[(yt >= lo) & (yt < hi)], yt[(yt >= lo) & (yt < hi)])
                        | {"share_of_all_scored_%": round(float(((price_all >= lo) & (price_all < hi)).mean() * 100), 1)}
                        for lab, lo, hi in BUCKETS}

@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 import pandas as pd
 from loguru import logger
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from db.models import CarListing, Prediction, PopularitySnapshot
@@ -100,16 +100,30 @@ class ListingRepository:
         ]
         return pd.DataFrame(rows)
 
-    def get_training_listings_df(self, min_price: float = 500, max_days_since_seen: int = 180) -> pd.DataFrame:
+    def get_training_listings_df(self) -> pd.DataFrame:
         """
-        Active *and* recently-delisted listings, for ML training/scoring.
+        Rows the model trains on — every filter lives in training_listings_v
+        (db/models.py). Ordered by id: train_test_split is order-sensitive.
 
-        Unlike get_active_listings_df, this does not filter on is_active —
+        Like get_scoring_listings_df, this does not filter on is_active —
         a delisted car's price/mileage/features are still real training
-        signal, so it stays in the model's dataset after mark_stale_inactive
-        excludes it from the live results. Bounded by last_seen so the
-        training set doesn't accumulate indefinitely-old rows that no
-        longer reflect current pricing.
+        signal. Bounded by last_seen so the training set doesn't accumulate
+        indefinitely-old rows that no longer reflect current pricing.
+        """
+        return pd.read_sql(
+            text("SELECT * FROM training_listings_v ORDER BY id"),
+            self.session.connection(),
+            parse_dates=["first_seen", "last_seen"],
+        )
+
+    def get_scoring_listings_df(self, min_price: float = 500, max_days_since_seen: int = 180) -> pd.DataFrame:
+        """
+        Active *and* recently-delisted listings, for scoring.
+
+        Deliberately looser than the training view: stale, very cheap/expensive
+        and high-mileage listings still get a deal score even though the model
+        doesn't learn "market" from them. Includes recently-delisted rows so
+        predictions stay ready if a listing is re-seen and reactivated.
         """
         cutoff = datetime.utcnow() - timedelta(days=max_days_since_seen)
         query = (
