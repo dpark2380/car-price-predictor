@@ -29,6 +29,11 @@ FROM (
     HAVING n > 1
 );
 
+-- Duplicate VINs that reach training (must be 0: training_pool_v keeps one row per VIN)
+SELECT COUNT(*) - COUNT(DISTINCT COALESCE(NULLIF(vin, ''), 'listing:' || listing_id))
+    AS training_duplicate_vins
+FROM training_listings_v;
+
 -- Predictions whose listing is missing or no longer active
 SELECT COUNT(*) AS predictions_without_active_listing
 FROM predictions p

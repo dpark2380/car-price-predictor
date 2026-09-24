@@ -85,6 +85,14 @@ def log_training(result: dict) -> None:
     _append_csv(LOGS_DIR / "training_log.csv", row)
 
 
+def log_validation(counts: dict) -> None:
+    """One row per retrain, so e.g. duplicate_vins can be tracked over time.
+    ponytail: header is written once; adding a check to validation.sql needs a
+    fresh validation_log.csv (columns would misalign otherwise)."""
+    row = {"timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), **counts}
+    _append_csv(LOGS_DIR / "validation_log.csv", row)
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 def load_targets(path: str = "config/search_targets.json") -> list[dict]:
@@ -163,6 +171,7 @@ def ml_train_job(repo: ListingRepository):
 
     counts = run_validation(repo.session)
     logger.info("Data validation: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    log_validation(counts)
 
     # All training filters live in the training_listings_v SQL view
     # (db/models.py); recently-delisted listings stay in — their data is
