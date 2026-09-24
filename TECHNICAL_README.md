@@ -515,7 +515,7 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 **Why:** Naive computation lets each row partially see its own price when its cohort feature is calculated — target leakage. For each training row, the cohort median is computed from the other 4 folds only. At inference, the full training cohort stats are used (no leakage concern).
 
-**File:** `ml/pipeline.py` — `_kfold_cohort_encode()`
+**File:** `ml/pipeline.py` — `_kfold_cohort_encode()` (out-of-fold, pandas); the full inference stats are computed in SQL by `db/repository.py` — `ListingRepository.get_cohort_stats()`. Training rows come pre-filtered from the `training_listings_v` view (`db/models.py`).
 
 ---
 
