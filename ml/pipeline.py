@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from loguru import logger
 
-from sklearn.model_selection import train_test_split, KFold, GridSearchCV
+from sklearn.model_selection import train_test_split, KFold, GridSearchCV, GroupShuffleSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor
@@ -309,6 +309,19 @@ def _kfold_cohort_encode(X: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> pd
     return X
 
 
+def _vin_split(X: pd.DataFrame, y: pd.Series, df: pd.DataFrame):
+    """
+    80/20 train/test split grouped by VIN, so no car lands on both sides.
+    training_pool_v already keeps one row per VIN; this is the safeguard if
+    that ever regresses. Rows without a VIN are their own group.
+    """
+    vin = df["vin"].fillna("")
+    groups = vin.where(vin != "", "listing:" + df["listing_id"].astype(str))
+    splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    train_idx, test_idx = next(splitter.split(X, y, groups))
+    return X.iloc[train_idx], X.iloc[test_idx], y.iloc[train_idx], y.iloc[test_idx]
+
+
 def train(df: pd.DataFrame, repo) -> dict | None:
     """df: rows from ListingRepository.get_training_listings_df; repo: that
     ListingRepository, used to compute cohort stats in SQL."""
@@ -328,9 +341,7 @@ def train(df: pd.DataFrame, repo) -> dict | None:
     X_raw = _build_features_raw(df)
     y = df["price"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_raw, y, test_size=0.2, random_state=42
-    )
+    X_train, X_test, y_train, y_test = _vin_split(X_raw, y, df)
 
     # Full cohort stats (SQL, training split only) are saved for inference;
     # training rows get k-fold out-of-fold encoding — no leakage.
