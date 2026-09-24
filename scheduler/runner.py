@@ -12,6 +12,7 @@ from loguru import logger
 
 from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
+from db.validation import run_validation
 from scraper.data_ingest import DataIngestor
 from ml import pipeline
 from env_utils import env_int
@@ -159,6 +160,9 @@ def popularity_job(repo: ListingRepository, pop_repo: PopularityRepository):
 
 def ml_train_job(repo: ListingRepository):
     logger.info("▶ ML train job starting")
+
+    counts = run_validation(repo.session)
+    logger.info("Data validation: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
 
     # All training filters live in the training_listings_v SQL view
     # (db/models.py); recently-delisted listings stay in — their data is
