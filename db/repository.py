@@ -6,12 +6,13 @@ Abstracts all DB interactions so other modules stay clean.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 
 import pandas as pd
 from loguru import logger
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from db.models import CarListing, Prediction, PopularitySnapshot
@@ -100,16 +101,63 @@ class ListingRepository:
         ]
         return pd.DataFrame(rows)
 
-    def get_training_listings_df(self, min_price: float = 500, max_days_since_seen: int = 180) -> pd.DataFrame:
+    def get_training_listings_df(self) -> pd.DataFrame:
         """
-        Active *and* recently-delisted listings, for ML training/scoring.
+        Rows the model trains on — every filter lives in training_listings_v
+        (db/models.py). Ordered by id: train_test_split is order-sensitive.
 
-        Unlike get_active_listings_df, this does not filter on is_active —
+        Like get_scoring_listings_df, this does not filter on is_active —
         a delisted car's price/mileage/features are still real training
-        signal, so it stays in the model's dataset after mark_stale_inactive
-        excludes it from the live results. Bounded by last_seen so the
-        training set doesn't accumulate indefinitely-old rows that no
-        longer reflect current pricing.
+        signal. Bounded by last_seen so the training set doesn't accumulate
+        indefinitely-old rows that no longer reflect current pricing.
+        """
+        return pd.read_sql(
+            text("SELECT * FROM training_listings_v ORDER BY id"),
+            self.session.connection(),
+            parse_dates=["first_seen", "last_seen"],
+        )
+
+    def get_cohort_stats(self, listing_ids) -> pd.DataFrame:
+        """
+        Median price and count per (make, model, year) over the given
+        car_listings ids — the model's market-relative features. SQLite has
+        no MEDIAN, so rank prices within each cohort and average the middle
+        one (odd n) or two (even n), matching pandas' median.
+
+        Keys are normalised like _build_features_raw (lower + trim).
+        ponytail: SQLite LOWER/TRIM are ASCII-only while pandas' are Unicode;
+        identical for today's data, revisit if non-ASCII makes/models appear.
+        """
+        sql = text("""
+            WITH src AS (
+                SELECT LOWER(TRIM(make)) AS make, LOWER(TRIM(model)) AS model, year, price
+                FROM car_listings
+                WHERE id IN (SELECT value FROM json_each(:ids))
+            ), ranked AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY make, model, year ORDER BY price) AS rn,
+                       COUNT(*)     OVER (PARTITION BY make, model, year)                AS n
+                FROM src
+            )
+            SELECT make, model, year, AVG(price) AS cohort_median, MAX(n) AS cohort_count
+            FROM ranked
+            WHERE rn IN ((n + 1) / 2, (n + 2) / 2)
+            GROUP BY make, model, year
+            ORDER BY make, model, year
+        """)
+        ids = json.dumps([int(i) for i in listing_ids])
+        return pd.read_sql(sql, self.session.connection(), params={"ids": ids}).set_index(
+            ["make", "model", "year"]
+        )
+
+    def get_scoring_listings_df(self, min_price: float = 500, max_days_since_seen: int = 180) -> pd.DataFrame:
+        """
+        Active *and* recently-delisted listings, for scoring.
+
+        Deliberately looser than the training view: stale, very cheap/expensive
+        and high-mileage listings still get a deal score even though the model
+        doesn't learn "market" from them. Includes recently-delisted rows so
+        predictions stay ready if a listing is re-seen and reactivated.
         """
         cutoff = datetime.utcnow() - timedelta(days=max_days_since_seen)
         query = (

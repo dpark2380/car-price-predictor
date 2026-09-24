@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from loguru import logger
 
-from sklearn.model_selection import train_test_split, KFold, GridSearchCV
+from sklearn.model_selection import train_test_split, KFold, GridSearchCV, GroupShuffleSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor
@@ -139,9 +139,6 @@ class RelaxedLasso(BaseEstimator, RegressorMixin):
 
 MODEL_PATH = "models/price_predictor.joblib"
 MIN_TRAINING_SAMPLES = env_int("MIN_TRAINING_SAMPLES", 140)
-# Listings on market longer than this (Marketcheck `dom`) are excluded from
-# training — their asking price is unreliable as a market signal.
-STALE_LISTING_MAX_DAYS = env_int("STALE_LISTING_MAX_DAYS", 365)
 TRIM_RANKINGS_PATH = "config/trim_rankings.json"
 
 import json as _json
@@ -280,9 +277,7 @@ def _apply_cohort_features(X: pd.DataFrame, cohort_stats: pd.DataFrame) -> pd.Da
     return X
 
 
-def _kfold_cohort_encode(
-    X: pd.DataFrame, y: pd.Series, n_splits: int = 5
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _kfold_cohort_encode(X: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> pd.DataFrame:
     """
     Compute cohort_median_price and cohort_count for each training row using
     k-fold target encoding to prevent leakage.
@@ -290,9 +285,8 @@ def _kfold_cohort_encode(
     For each row, the cohort median is computed from the other k-1 folds —
     so no row ever sees its own price when its cohort feature is computed.
 
-    Also returns full_cohort_stats (computed from all training data), which is
-    saved in the model payload and used at inference time (score_listings,
-    /api/predict) where there is no leakage concern.
+    The full (non-fold) cohort stats used at inference time come from SQL —
+    ListingRepository.get_cohort_stats.
     """
     X = X.copy()
     cohort_median = np.full(len(X), np.nan)
@@ -312,36 +306,31 @@ def _kfold_cohort_encode(
 
     X["cohort_median_price"] = cohort_median
     X["cohort_count"]        = cohort_count.astype(float)
-
-    # Full cohort stats for inference — saved in model payload
-    full_cohort_stats = _compute_cohort_stats(X.drop(columns=["cohort_median_price", "cohort_count"]), y)
-
-    return X, full_cohort_stats
+    return X
 
 
-def train(df: pd.DataFrame) -> dict | None:
+def _vin_split(X: pd.DataFrame, y: pd.Series, df: pd.DataFrame):
+    """
+    80/20 train/test split grouped by VIN, so no car lands on both sides.
+    training_pool_v already keeps one row per VIN; this is the safeguard if
+    that ever regresses. Rows without a VIN are their own group.
+    """
+    vin = df["vin"].fillna("")
+    groups = vin.where(vin != "", "listing:" + df["listing_id"].astype(str))
+    splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    train_idx, test_idx = next(splitter.split(X, y, groups))
+    return X.iloc[train_idx], X.iloc[test_idx], y.iloc[train_idx], y.iloc[test_idx]
+
+
+def train(df: pd.DataFrame, repo) -> dict | None:
+    """df: rows from ListingRepository.get_training_listings_df; repo: that
+    ListingRepository, used to compute cohort stats in SQL."""
     logger.info("Starting model training run…")
 
     # -----------------------------
-    # 1) Clean + filter
+    # 1) Rows arrive pre-filtered by the training_listings_v SQL view
+    #    (db/models.py) — price/mileage bounds, stale days_listed, nulls.
     # -----------------------------
-    df = df.dropna(subset=["price", "mileage", "year", "make", "model"]).copy()
-    df["price"] = pd.to_numeric(df["price"], errors="coerce")
-    df["mileage"] = pd.to_numeric(df["mileage"], errors="coerce")
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-
-    df = df.dropna(subset=["price", "mileage", "year"])
-    df = df[df["price"].between(3_000, 100_000)]
-    df = df[df["mileage"].between(0, 400_000)]
-
-    # Drop stale listings from training. days_listed (Marketcheck `dom`) reaches
-    # into the thousands for abandoned/mispriced inventory whose asking price no
-    # longer reflects the current market. Training only on fresh listings gives a
-    # cleaner fair-value signal (measurably lowers MAE, especially on luxury).
-    # These stale listings are still scored — we just don't learn "market" from them.
-    _dom = pd.to_numeric(df.get("days_listed"), errors="coerce").fillna(0)
-    df = df[_dom <= STALE_LISTING_MAX_DAYS]
-
     if len(df) < MIN_TRAINING_SAMPLES:
         logger.warning(f"Not enough data to train ({len(df)} rows, need {MIN_TRAINING_SAMPLES})")
         return None
@@ -352,12 +341,12 @@ def train(df: pd.DataFrame) -> dict | None:
     X_raw = _build_features_raw(df)
     y = df["price"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_raw, y, test_size=0.2, random_state=42
-    )
+    X_train, X_test, y_train, y_test = _vin_split(X_raw, y, df)
 
-    # K-fold cohort encoding — no leakage, full stats saved for inference
-    X_train, full_cohort_stats = _kfold_cohort_encode(X_train, y_train)
+    # Full cohort stats (SQL, training split only) are saved for inference;
+    # training rows get k-fold out-of-fold encoding — no leakage.
+    full_cohort_stats = repo.get_cohort_stats(df.loc[X_train.index, "id"])
+    X_train = _kfold_cohort_encode(X_train, y_train)
     X_test = _apply_cohort_features(X_test, full_cohort_stats)
 
     # log-space targets (this is what we train on)

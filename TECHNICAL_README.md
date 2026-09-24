@@ -515,7 +515,7 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 **Why:** Naive computation lets each row partially see its own price when its cohort feature is calculated — target leakage. For each training row, the cohort median is computed from the other 4 folds only. At inference, the full training cohort stats are used (no leakage concern).
 
-**File:** `ml/pipeline.py` — `_kfold_cohort_encode()`
+**File:** `ml/pipeline.py` — `_kfold_cohort_encode()` (out-of-fold, pandas); the full inference stats are computed in SQL by `db/repository.py` — `ListingRepository.get_cohort_stats()`. Training rows come pre-filtered from the `training_listings_v` view (`db/models.py`).
 
 ---
 
@@ -707,10 +707,10 @@ A listing flagged as "overpriced" may simply be priced for a market the model wa
 
 ### 16.6 Single Train/Test Split Variance
 
-All reported MAE figures come from a single 80/20 split with `random_state=42`. The variance between runs on the same dataset — purely from which listings land in the test set — is $150–400 in MAE. This means:
+All reported MAE figures come from a single 80/20 split with `random_state=42` (grouped by VIN since 2026-09-24). The variance between runs on the same dataset — purely from which listings land in the test set — is $150–400 in MAE. This means:
 
 - The difference between a $2,786 run and a $2,966 run on the same day (April 30) is partly real (different dataset from the 429 rate limit) and partly split noise
-- Reported MAE should be interpreted as "approximately $2,700–3,000" not as a precise figure
+- Reported MAE should be interpreted as a band, not a precise figure: currently "approximately $3,500–3,900" around the $3,678 run. Figures before the VIN dedup (roughly $2,700–3,200) were flattered by duplicate VINs leaking across the split and are not comparable
 - Cross-validation of the final model (not just the grid search) would give a more reliable estimate
 
 ---

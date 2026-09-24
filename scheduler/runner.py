@@ -12,6 +12,7 @@ from loguru import logger
 
 from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
+from db.validation import run_validation
 from scraper.data_ingest import DataIngestor
 from ml import pipeline
 from env_utils import env_int
@@ -84,6 +85,14 @@ def log_training(result: dict) -> None:
     _append_csv(LOGS_DIR / "training_log.csv", row)
 
 
+def log_validation(counts: dict) -> None:
+    """One row per retrain, so e.g. duplicate_vins can be tracked over time.
+    ponytail: header is written once; adding a check to validation.sql needs a
+    fresh validation_log.csv (columns would misalign otherwise)."""
+    row = {"timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), **counts}
+    _append_csv(LOGS_DIR / "validation_log.csv", row)
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────────
 
 def load_targets(path: str = "config/search_targets.json") -> list[dict]:
@@ -131,7 +140,7 @@ def score_job(repo: ListingRepository, pred_repo: PredictionRepository):
     # Includes recently-deactivated listings too, so predictions stay ready
     # for them (e.g. if a listing gets re-seen and reactivated later) even
     # though the live results endpoint only ever surfaces active ones.
-    df = repo.get_training_listings_df()
+    df = repo.get_scoring_listings_df()
     if df.empty:
         logger.warning("No listings to score")
         return
@@ -160,15 +169,19 @@ def popularity_job(repo: ListingRepository, pop_repo: PopularityRepository):
 def ml_train_job(repo: ListingRepository):
     logger.info("▶ ML train job starting")
 
-    # Recently-delisted listings stay in the training set — their price/
-    # mileage/feature data is still real signal, only the live results
-    # endpoint excludes them. See ListingRepository.get_training_listings_df.
+    counts = run_validation(repo.session)
+    logger.info("Data validation: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    log_validation(counts)
+
+    # All training filters live in the training_listings_v SQL view
+    # (db/models.py); recently-delisted listings stay in — their data is
+    # still real signal, only the live results endpoint excludes them.
     df = repo.get_training_listings_df()
     if df.empty:
         logger.warning("No data to train on")
         return
 
-    result = pipeline.train(df)
+    result = pipeline.train(df, repo)
 
     if result is None:
         logger.warning("Training did not run (insufficient data)")
