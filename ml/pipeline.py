@@ -139,9 +139,6 @@ class RelaxedLasso(BaseEstimator, RegressorMixin):
 
 MODEL_PATH = "models/price_predictor.joblib"
 MIN_TRAINING_SAMPLES = env_int("MIN_TRAINING_SAMPLES", 140)
-# Listings on market longer than this (Marketcheck `dom`) are excluded from
-# training — their asking price is unreliable as a market signal.
-STALE_LISTING_MAX_DAYS = env_int("STALE_LISTING_MAX_DAYS", 365)
 TRIM_RANKINGS_PATH = "config/trim_rankings.json"
 
 import json as _json
@@ -323,25 +320,9 @@ def train(df: pd.DataFrame) -> dict | None:
     logger.info("Starting model training run…")
 
     # -----------------------------
-    # 1) Clean + filter
+    # 1) Rows arrive pre-filtered by the training_listings_v SQL view
+    #    (db/models.py) — price/mileage bounds, stale days_listed, nulls.
     # -----------------------------
-    df = df.dropna(subset=["price", "mileage", "year", "make", "model"]).copy()
-    df["price"] = pd.to_numeric(df["price"], errors="coerce")
-    df["mileage"] = pd.to_numeric(df["mileage"], errors="coerce")
-    df["year"] = pd.to_numeric(df["year"], errors="coerce")
-
-    df = df.dropna(subset=["price", "mileage", "year"])
-    df = df[df["price"].between(3_000, 100_000)]
-    df = df[df["mileage"].between(0, 400_000)]
-
-    # Drop stale listings from training. days_listed (Marketcheck `dom`) reaches
-    # into the thousands for abandoned/mispriced inventory whose asking price no
-    # longer reflects the current market. Training only on fresh listings gives a
-    # cleaner fair-value signal (measurably lowers MAE, especially on luxury).
-    # These stale listings are still scored — we just don't learn "market" from them.
-    _dom = pd.to_numeric(df.get("days_listed"), errors="coerce").fillna(0)
-    df = df[_dom <= STALE_LISTING_MAX_DAYS]
-
     if len(df) < MIN_TRAINING_SAMPLES:
         logger.warning(f"Not enough data to train ({len(df)} rows, need {MIN_TRAINING_SAMPLES})")
         return None

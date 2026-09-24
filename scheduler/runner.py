@@ -131,7 +131,7 @@ def score_job(repo: ListingRepository, pred_repo: PredictionRepository):
     # Includes recently-deactivated listings too, so predictions stay ready
     # for them (e.g. if a listing gets re-seen and reactivated later) even
     # though the live results endpoint only ever surfaces active ones.
-    df = repo.get_training_listings_df()
+    df = repo.get_scoring_listings_df()
     if df.empty:
         logger.warning("No listings to score")
         return
@@ -160,9 +160,9 @@ def popularity_job(repo: ListingRepository, pop_repo: PopularityRepository):
 def ml_train_job(repo: ListingRepository):
     logger.info("▶ ML train job starting")
 
-    # Recently-delisted listings stay in the training set — their price/
-    # mileage/feature data is still real signal, only the live results
-    # endpoint excludes them. See ListingRepository.get_training_listings_df.
+    # All training filters live in the training_listings_v SQL view
+    # (db/models.py); recently-delisted listings stay in — their data is
+    # still real signal, only the live results endpoint excludes them.
     df = repo.get_training_listings_df()
     if df.empty:
         logger.warning("No data to train on")
