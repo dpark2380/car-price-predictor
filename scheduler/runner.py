@@ -168,7 +168,7 @@ def ml_train_job(repo: ListingRepository):
         logger.warning("No data to train on")
         return
 
-    result = pipeline.train(df)
+    result = pipeline.train(df, repo)
 
     if result is None:
         logger.warning("Training did not run (insufficient data)")
