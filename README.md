@@ -6,43 +6,42 @@ A used car market intelligence pipeline that ingests live listings from the Mark
 
 ## Results
 
-Four model families are trained on the same feature set and compared: **Linear Regression**, a custom **Relaxed Lasso** (LassoCV variable selection followed by unregularized OLS refit on the selected variables), **Random Forest**, and **XGBoost**. The candidate with the lowest MAE on the held-out test set is selected for deployment (`ml/pipeline.py:583`). XGBoost has won every logged run except one (`2026-04-28 03:10`, Relaxed Lasso).
+Four model families are trained on the same features and the same split: **Linear Regression**, a custom **Relaxed Lasso** (LassoCV variable selection, then an unregularized OLS refit on the selected variables), **Random Forest**, and **XGBoost**.
 
-**Evaluation setup** (`ml/pipeline.py:325-354`):
-- Training rows come from the `training_listings_v` SQL view (`db/models.py`): price $3k--100k, mileage 0--400k, `days_listed` <= 365, last seen within 180 days, and **one row per VIN** (the latest snapshot). Dealers re-list the same car under a new listing id, usually after a price cut, so without this a test car's near-identical twin sits in the training set.
-- 80/20 train/test split **grouped by VIN** (`GroupShuffleSplit`, `random_state=42`), so no car appears on both sides
-- Target: `log1p(price)` (log-space regression), predictions converted back with `expm1` and a bias-correction offset (`log_calibration`) set to the median log residual on the **test** set (`ml/pipeline.py:595-596`)
+**Evaluation setup** (`ml/pipeline.py:318-332`, `db/models.py:93`):
+- Rows come from the `training_pool_v` SQL view: price $3k-100k, mileage 0-400k, `days_listed` <= 365, last seen within 180 days, and **one row per VIN** (the latest snapshot). Dealers relist the same car under a new listing id, usually after a price cut, so without this the test set contains near-identical twins of training cars.
+- Train/validation/test split **grouped by VIN** (`GroupShuffleSplit`, seed 42): test is 20% of cars, validation is 20% of the rest (64/16/20). No VIN appears in more than one split; the audit script asserts this and records the overlap counts (all 0).
+- The **test split is used once, for reporting.** The model is selected on validation MAE (`ml/pipeline.py:607`), and the bias-correction offset (`log_calibration`, median log residual) is fit on validation (`ml/pipeline.py:622`).
+- Target: `log1p(price)`, converted back with `expm1` minus the calibration offset, as production serves it.
 
-**Held-out test set error** for model version `20260924_1527` (9,499 unique cars; test n=1,900), from `scripts/holdout_audit.py --candidates`:
+**Held-out test results**, from [`outputs/holdout_metrics.json`](outputs/holdout_metrics.json), produced by `scripts/holdout_audit.py` (9,688 unique cars as of 2026-09-27; 6,200 train, 1,550 val, 1,938 test). Median abs % error is `median(|pred - true| / true)`. Price segments filter on the **true** asking price.
 
-| Model | MAE | Median abs % error | Within ±10% |
-|---|---|---|---|
-| Linear | $5,659 | 14.3% | 36.3% |
-| Relaxed Lasso | $5,011 | 13.1% | 40.4% |
-| Random Forest | $3,881 | 9.0% | 52.4% |
-| **XGBoost (selected)** | **$3,678** | **8.9%** | **53.4%** |
+| Model | Val MAE | Test MAE | Median abs % error | $20-35k (n=652) | < $10k (n=254) |
+|---|---|---|---|---|---|
+| Linear | $5,024 | $5,346 | 14.1% | 11.0% | 28.1% |
+| Relaxed Lasso | $4,395 | $4,798 | 12.5% | 9.2% | 19.3% |
+| Random Forest | $3,797 | $3,821 | 9.1% (95% CI 8.6-9.7) | 5.4% (4.8-6.5) | 19.0% |
+| **XGBoost (selected)** | **$3,594** | **$3,658** | **9.0% (95% CI 8.4-9.6)** | **6.3% (5.5-7.0)** | **17.3%** |
 
-| Price segment | Median abs % error | Share of scored listings |
-|---|---|---|
-| < $10k | 17.8% | 14.0% |
-| $10--20k | 10.6% | 22.7% |
-| $20--35k | 6.8% | 33.8% |
-| $35--60k | 7.5% | 21.9% |
-| > $60k | 9.5% | 7.6% |
+CIs are percentile bootstraps over the test set (2,000 resamples). XGBoost is selected because it has the lowest validation MAE. It also has the lowest overall test median error, but its margin over Random Forest is not significant: the paired bootstrap CI for the difference is -0.7 to +0.4 points overall. In the $20-35k segment Random Forest is better (5.4% vs 6.3%), a difference whose CI (-0.1 to +1.5 points) just includes zero.
 
-These are higher than the previously reported figures (XGBoost MAE $3,237, 7.6% median error). Those were inflated by duplicate VINs: 27.8% of the old test rows had the same car in training, typically priced within ~2.6%. On the old test set, the previous model scored MAE $2,555 on those leaked rows but $3,494 (9.3% median error) on clean ones, so the new numbers are the honest ones. Against that clean-row baseline, median error is slightly better (8.9% vs 9.3%) and MAE about $180 higher, consistent with training on 18% fewer rows.
+Caveats:
+- The target is the dealer's **asking** price, not a sale price, so "error" means distance from the asking price.
+- One random split of cars listed over the same period, not a time-ordered backtest. It measures fair value for current inventory, not forecasting.
+- Segment n is small (254 cars under $10k), and the scheduled job retrains on newer data every run, so the live model's error will drift from these figures. Re-run the script to refresh them.
+- The database is not committed (Marketcheck data), so the numbers reproduce only from the same DB snapshot. `rows_sha256` in the results file fingerprints the rows that were evaluated.
 
-Caveats: this is a single split, and `TECHNICAL_README.md` puts split-to-split MAE noise at $150--400. The winner is chosen on the same test set it is reported on, so its figure is slightly optimistic. The script rebuilds the split as of the model's training time and asserts that it matches the saved cohort stats and logged MAE. Re-splitting the current database instead would leak training rows into the test set. That mistake produced the 3.99% figure this README previously reported. Numbers change after every scheduled retrain.
+Earlier versions of this README reported much lower error figures. Those are retracted: they came from re-splitting a live database with a random, non-VIN-grouped split, which put training cars (and relisted twins of them) into the test set.
 
 **Serving latency**, from `scripts/latency_bench.py` on an Apple M5 laptop (localhost, one sequential client, Flask server as started by `start.py`):
 
 | Endpoint | p50 | p95 |
 |---|---|---|
-| `/api/predict` (live model inference) | 11.3 ms | 12.4 ms |
-| `/api/deals` (precomputed scores, limit=100) | 89 ms | 117 ms |
-| `/api/deals?limit=10000` (dashboard) | 377 ms | 390 ms |
+| `/api/predict` (live model inference) | 10.2 ms | 10.7 ms |
+| `/api/deals?limit=100` (precomputed scores) | 13.8 ms | 16.6 ms |
+| `/api/deals?min_score=0` (dashboard, all 12,843 graded listings) | 461 ms | 496 ms |
 
-A full rescoring pass over 14,526 listings takes 0.2 s. Writing the scores to SQLite adds about 2 s.
+A full rescoring pass over 14,737 listings takes 0.2 s. Writing the scores to SQLite adds about 2 s.
 
 ---
 
@@ -80,11 +79,11 @@ flowchart LR
 
 | Method | Endpoint | Purpose | Example response shape |
 |---|---|---|---|
-| GET | `/api/deals` | Top deals by score. Query: `limit`, `min_score`, `make`, `model`, `body` | `[{"listing_id": "...", "year": 2021, "make": "Honda", "model": "Accord", "price": 22000, "predicted_price": 23800, "savings": 1800, "deal_score": 72.5, "deal_label": "3 Stars", "mileage": 34000, ...}]` |
+| GET | `/api/deals` | Graded listings, best deal first. Query: `limit` (default: all), `min_score`, `make`, `model`, `body` | `[{"listing_id": "...", "year": 2021, "make": "Honda", "model": "Accord", "price": 22000, "predicted_price": 23800, "savings": 1800, "deal_score": 72.5, "deal_label": "3 Stars", "mileage": 34000, ...}]` |
 | GET | `/api/popular` | Most-listed year/make/model cohorts. Query: `limit` | `[{"rank": 1, "year": 2022, "make": "Toyota", "model": "Camry", "active_listings": 88, "avg_price": 26500, "median_price": 25900, ...}]` |
-| GET | `/api/stats` | Global market snapshot | `{"active_listings": 14228, "makes": 47, "models": 612, "avg_price": 27431.2, "price_min": 3100, "price_max": 99500, "last_updated": "2026-09-21T00:00:00Z"}` |
+| GET | `/api/stats` | Global market snapshot | `{"active_listings": 12854, "graded_listings": 12843, "makes": 47, "models": 612, "avg_price": 27431.2, "price_min": 3100, "price_max": 99500, "last_updated": "2026-09-21T00:00:00Z"}` |
 | GET | `/api/trends` | Avg price by month for the top 5 makes over the last 7 months | `{"data": [{"month": "Mar", "toyota": 25100, "honda": 23900}], "makes": ["Toyota", "Honda", ...]}` |
-| GET | `/api/listings` | Active listings (sampled to 800) for the price vs. mileage scatter plot | `[{"year": 2020, "make": "Ford", "model": "F-150", "price": 31000, "mileage": 41000, "deal_score": 61.0, "deal_label": "Fair Price", ...}]` |
+| GET | `/api/listings` | Graded active listings (sampled to 800) for the price vs. mileage scatter plot | `[{"year": 2020, "make": "Ford", "model": "F-150", "price": 31000, "mileage": 41000, "deal_score": 61.0, "deal_label": "Fair Price", ...}]` |
 | GET | `/api/market-popular` | Live Marketcheck popularity data, proxied. Query: `state` (default `CA`), `limit` | `[{"make": "Toyota", "model": "RAV4", ...}]` or `{"error": "..."}` |
 | GET | `/api/recent-listings` | Live Marketcheck recent listings, proxied. Query: `make`, `model`, `rows` | `[{"id": "...", "vin": "...", "year": 2023, "price": 28000, "url": "...", "city": "Austin", "state": "TX"}]` |
 | GET | `/api/predict` | On-demand price prediction. Required: `make`, `model`, `year`, `mileage`. Optional: `trim`, `accident_count`, `owner_count`, `state` | `{"predicted_price": 24310.0}` |
@@ -95,7 +94,7 @@ flowchart LR
 
 ## Deal Scoring
 
-Each listing's asking price is compared to the model's predicted fair value (`ml/pipeline.py:705-724`):
+Each listing's asking price is compared to the model's predicted fair value (`ml/pipeline.py:728-747`). Only listings priced at or above `MIN_PRICE` ($3,000, `db/models.py:80`) are scored and shown: the model is trained on nothing cheaper.
 
 ```
 diff_pct = (predicted_price - actual_price) / predicted_price * 100
@@ -159,7 +158,7 @@ In production, retraining is triggered by a macOS launchd job that is **not part
 
 ## Limitations and Next Steps
 
-- No automated test suite for the core app. `onnx_export_test/` and `scripts/test_marketcheck_endpoints.py` are standalone experiments and smoke scripts, not CI-covered unit tests.
+- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split disjointness and the scoring price floor), not CI. `onnx_export_test/` and `scripts/test_marketcheck_endpoints.py` are standalone experiments and smoke scripts.
 - The deal score is a simple linear heuristic on predicted-vs-actual price gap. It isn't calibrated against actual sale outcomes.
 - The model doesn't see vehicle condition or options data, since Marketcheck doesn't return either in structured form. This is the largest known gap versus production pricing tools.
 - Retraining depends on a single machine's launchd job; it won't run while that machine is asleep or off, and there's no alerting if a run silently fails.
