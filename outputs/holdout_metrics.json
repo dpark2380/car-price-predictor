@@ -1,0 +1,221 @@
+{
+ "as_of": "2026-09-27 09:19:04.646281",
+ "training_window_days": 180,
+ "rows_sha256": "1d983884c7cae1b5d52cb9006cf212620f91ebcd2f701a468e42752a4f14ec29",
+ "split": {
+  "method": "GroupShuffleSplit by VIN: test 20%, then val 20% of the rest (64/16/20)",
+  "seed": 42,
+  "unique_vehicles": {
+   "train": 6200,
+   "val": 1550,
+   "test": 1938
+  },
+  "rows": {
+   "train": 6200,
+   "val": 1550,
+   "test": 1938
+  },
+  "vins_in_more_than_one_split": {
+   "train_val": 0,
+   "train_test": 0,
+   "val_test": 0
+  }
+ },
+ "metric": "median_ape_pct = median(|pred - true| / true) * 100 on test; mae in $. Predictions include the val-fitted calibration offset, as production serves them. Segments filter on TRUE price.",
+ "selected_model": "xgb",
+ "selection": {
+  "rule": "lowest val MAE (uncalibrated)",
+  "val_mae_winner": "xgb",
+  "test_median_ape_winner": "xgb",
+  "agree": true
+ },
+ "models": {
+  "linear": {
+   "val_mae": 5023.8,
+   "log_calibration_from_val": -0.0154,
+   "test": {
+    "n": 1938,
+    "mae": 5345.5,
+    "median_ape_pct": 14.11
+   },
+   "test_segments": {
+    "<$10k": {
+     "n": 254,
+     "mae": 2513.8,
+     "median_ape_pct": 28.13
+    },
+    "$10-20k": {
+     "n": 512,
+     "mae": 2688.4,
+     "median_ape_pct": 13.52
+    },
+    "$20-35k": {
+     "n": 652,
+     "mae": 4104.0,
+     "median_ape_pct": 11.02
+    },
+    "$35-60k": {
+     "n": 389,
+     "mae": 8044.2,
+     "median_ape_pct": 13.22
+    },
+    ">$60k": {
+     "n": 131,
+     "mae": 19386.0,
+     "median_ape_pct": 21.32
+    }
+   }
+  },
+  "relaxed_lasso": {
+   "val_mae": 4394.6,
+   "log_calibration_from_val": 0.0033,
+   "test": {
+    "n": 1938,
+    "mae": 4798.1,
+    "median_ape_pct": 12.51
+   },
+   "test_segments": {
+    "<$10k": {
+     "n": 254,
+     "mae": 1959.9,
+     "median_ape_pct": 19.31
+    },
+    "$10-20k": {
+     "n": 512,
+     "mae": 2526.1,
+     "median_ape_pct": 12.45
+    },
+    "$20-35k": {
+     "n": 652,
+     "mae": 3595.2,
+     "median_ape_pct": 9.19
+    },
+    "$35-60k": {
+     "n": 389,
+     "mae": 7694.5,
+     "median_ape_pct": 14.12
+    },
+    ">$60k": {
+     "n": 131,
+     "mae": 16567.5,
+     "median_ape_pct": 17.84
+    }
+   }
+  },
+  "rf": {
+   "val_mae": 3796.9,
+   "log_calibration_from_val": -0.0013,
+   "test": {
+    "n": 1938,
+    "mae": 3821.2,
+    "median_ape_pct": 9.1
+   },
+   "test_segments": {
+    "<$10k": {
+     "n": 254,
+     "mae": 1810.3,
+     "median_ape_pct": 19.01
+    },
+    "$10-20k": {
+     "n": 512,
+     "mae": 2614.2,
+     "median_ape_pct": 12.52
+    },
+    "$20-35k": {
+     "n": 652,
+     "mae": 2777.7,
+     "median_ape_pct": 5.44
+    },
+    "$35-60k": {
+     "n": 389,
+     "mae": 4976.7,
+     "median_ape_pct": 7.58
+    },
+    ">$60k": {
+     "n": 131,
+     "mae": 14199.9,
+     "median_ape_pct": 14.48
+    }
+   }
+  },
+  "xgb": {
+   "val_mae": 3593.8,
+   "log_calibration_from_val": -0.002,
+   "test": {
+    "n": 1938,
+    "mae": 3658.0,
+    "median_ape_pct": 8.97
+   },
+   "test_segments": {
+    "<$10k": {
+     "n": 254,
+     "mae": 1697.1,
+     "median_ape_pct": 17.25
+    },
+    "$10-20k": {
+     "n": 512,
+     "mae": 2279.7,
+     "median_ape_pct": 10.68
+    },
+    "$20-35k": {
+     "n": 652,
+     "mae": 2660.3,
+     "median_ape_pct": 6.32
+    },
+    "$35-60k": {
+     "n": 389,
+     "mae": 4856.1,
+     "median_ape_pct": 7.97
+    },
+    ">$60k": {
+     "n": 131,
+     "mae": 14254.3,
+     "median_ape_pct": 11.8
+    }
+   }
+  }
+ },
+ "bootstrap_median_ape_xgb_vs_rf": {
+  "resamples": 2000,
+  "seed": 42,
+  "overall": {
+   "xgb_ci95": [
+    8.41,
+    9.57
+   ],
+   "rf_ci95": [
+    8.59,
+    9.66
+   ],
+   "xgb_minus_rf": -0.13,
+   "xgb_minus_rf_ci95": [
+    -0.72,
+    0.38
+   ],
+   "difference_significant": false
+  },
+  "$20-35k": {
+   "xgb_ci95": [
+    5.53,
+    7.02
+   ],
+   "rf_ci95": [
+    4.83,
+    6.54
+   ],
+   "xgb_minus_rf": 0.87,
+   "xgb_minus_rf_ci95": [
+    -0.06,
+    1.45
+   ],
+   "difference_significant": false
+  }
+ },
+ "versions": {
+  "python": "3.14.6",
+  "sklearn": "1.9.1",
+  "xgboost": "3.4.1",
+  "numpy": "2.5.3",
+  "pandas": "3.0.6"
+ }
+}
