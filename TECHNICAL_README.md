@@ -168,10 +168,10 @@ This means $x_i$ in $b(x_i, \gamma_m)$ is the transformed, imputed, one-hot-enco
 **Post-Training Calibration** is also not in the theory:
 
 ```python
-log_calibration = float(np.median(test_log_preds - y_test_log.to_numpy()))
+log_cal = float(np.median(val_log - y_val_log.to_numpy()))
 ```
 
-After training, we compute the median systematic bias on the test set (in log space) and subtract it from all future predictions. This ensures the model doesn't consistently over- or under-predict by a fixed percentage — critical for a deal-scoring system where we need $\hat{y} = y$ at the median.
+After training, we compute the median systematic bias on the validation split (in log space; never the test split, which is reserved for reporting) and subtract it from all future predictions. This ensures the model doesn't consistently over- or under-predict by a fixed percentage — critical for a deal-scoring system where we need $\hat{y} = y$ at the median.
 
 ---
 
@@ -521,11 +521,11 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 ### 14.4 Post-Training Calibration
 
-**Change:** The median log-space residual on the test set is computed and saved as `log_calibration`. This offset is subtracted from all future predictions.
+**Change:** The median log-space residual on the validation split is computed and saved as `log_calibration`. (Until 2026-09-29 it was fit on the test set, which made reported test error slightly optimistic.) This offset is subtracted from all future predictions.
 
 **Why:** Systematic bias in a deal-scoring system shifts the entire score distribution. Calibration ensures the median predicted price equals the median actual price, giving a balanced mix of good/bad deals.
 
-**File:** `ml/pipeline.py` — `log_calibration = float(np.median(test_log_preds - y_test_log.to_numpy()))`
+**File:** `ml/pipeline.py` — `log_cal = float(np.median(val_log - y_val_log.to_numpy()))`
 
 ---
 
@@ -707,7 +707,7 @@ A listing flagged as "overpriced" may simply be priced for a market the model wa
 
 ### 16.6 Single Train/Test Split Variance
 
-All reported MAE figures come from a single 80/20 split with `random_state=42` (grouped by VIN since 2026-09-24). The variance between runs on the same dataset — purely from which listings land in the test set — is $150–400 in MAE. This means:
+Historical MAE figures below come from a single 80/20 split with `random_state=42`. Since 2026-09-29 the split is train/val/test (64/16/20) grouped by VIN, with selection and calibration on val; current figures are in `outputs/holdout_metrics.json`. The variance between runs on the same dataset — purely from which listings land in the test set — is $150–400 in MAE. This means:
 
 - The difference between a $2,786 run and a $2,966 run on the same day (April 30) is partly real (different dataset from the 429 rate limit) and partly split noise
 - Reported MAE should be interpreted as a band, not a precise figure: currently "approximately $3,500–3,900" around the $3,678 run. Figures before the VIN dedup (roughly $2,700–3,200) were flattered by duplicate VINs leaking across the split and are not comparable
