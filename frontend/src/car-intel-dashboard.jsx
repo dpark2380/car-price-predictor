@@ -234,7 +234,7 @@ export default function CarIntelDashboard() {
       }
     };
 
-    load("deals", `${API}/deals?limit=10000&min_score=0`, setDeals);
+    load("deals", `${API}/deals?min_score=0`, setDeals);
     load("stats", `${API}/stats`, setStats);
   }, []);
 
@@ -369,7 +369,7 @@ export default function CarIntelDashboard() {
     return arr;
   }, [deals, minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
-  // Rendering all ~10,000 fetched listings as DOM rows at once is what made
+  // Rendering every fetched listing (~13k) as DOM rows at once is what made
   // the results page laggy — cap the rendered slice and let people load
   // more, instead of rendering everything up front.
   useEffect(() => {
@@ -475,7 +475,7 @@ export default function CarIntelDashboard() {
 
   const statCluster = (
     <>
-      {statReadout("Listings", isLoading ? "—" : fmtN(stats.active_listings))}
+      {statReadout("Listings", isLoading ? "—" : fmtN(stats.graded_listings))}
       {statReadout("Makes", isLoading ? "—" : stats.makes)}
       {statReadout("Avg. price", isLoading ? "—" : fmt$(stats.avg_price))}
     </>
@@ -551,7 +551,7 @@ export default function CarIntelDashboard() {
                 Know what a used car is really worth.
               </div>
               <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 15, color: "var(--color-text-secondary)", marginTop: 16, maxWidth: 440, lineHeight: 1.55 }}>
-                Car Intel grades {isLoading ? "every" : fmtN(stats.active_listings)} live listing against a market-value model, so you can tell a fair price from an inflated one before you call the dealer.
+                Car Intel grades {isLoading ? "every" : fmtN(stats.graded_listings)} live listing against a market-value model, so you can tell a fair price from an inflated one before you call the dealer.
               </p>
               <div style={{ display: "flex", gap: 10, marginTop: 28 }}>
                 <button

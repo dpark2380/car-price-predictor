@@ -75,6 +75,9 @@ DB_PATH = "sqlite:///car_intel.db"
 # still scored; we just don't learn "market" from them.
 STALE_LISTING_MAX_DAYS = env_int("STALE_LISTING_MAX_DAYS", 365)
 TRAINING_WINDOW_DAYS = 180
+# Price floor for both training and scoring: below it the model has no data,
+# so a deal score there would be a guess (and tends to read as "100, steal").
+MIN_PRICE = 3000
 
 # The single definition of which rows the model trains on.
 # training_pool_v: value filters + one row per VIN, so scripts/holdout_audit.py
@@ -94,7 +97,7 @@ VIEWS = {
                 ORDER BY last_seen DESC, id DESC
             ) AS vin_rank
             FROM car_listings
-            WHERE price BETWEEN 3000 AND 100000
+            WHERE price BETWEEN {MIN_PRICE} AND 100000
               AND mileage BETWEEN 0 AND 400000
               AND COALESCE(days_listed, 0) <= {STALE_LISTING_MAX_DAYS}
               AND year IS NOT NULL

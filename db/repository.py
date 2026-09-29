@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from db.models import CarListing, Prediction, PopularitySnapshot
+from db.models import CarListing, Prediction, PopularitySnapshot, MIN_PRICE
 
 
 # ── Listings ──────────────────────────────────────────────────────────────────
@@ -150,20 +150,21 @@ class ListingRepository:
             ["make", "model", "year"]
         )
 
-    def get_scoring_listings_df(self, min_price: float = 500, max_days_since_seen: int = 180) -> pd.DataFrame:
+    def get_scoring_listings_df(self, min_price: float = MIN_PRICE, max_days_since_seen: int = 180) -> pd.DataFrame:
         """
         Active *and* recently-delisted listings, for scoring.
 
-        Deliberately looser than the training view: stale, very cheap/expensive
-        and high-mileage listings still get a deal score even though the model
-        doesn't learn "market" from them. Includes recently-delisted rows so
+        Deliberately looser than the training view: stale and high-mileage
+        listings still get a deal score even though the model doesn't learn
+        "market" from them. The price floor matches training (MIN_PRICE):
+        below it the model has seen no cars. Includes recently-delisted rows so
         predictions stay ready if a listing is re-seen and reactivated.
         """
         cutoff = datetime.utcnow() - timedelta(days=max_days_since_seen)
         query = (
             self.session.query(CarListing)
             .filter(
-                CarListing.price > min_price,
+                CarListing.price >= min_price,
                 CarListing.year.isnot(None),
                 CarListing.mileage.isnot(None),
                 CarListing.last_seen >= cutoff,
@@ -257,25 +258,36 @@ class PredictionRepository:
         self.session.commit()
         logger.info(f"Saved {len(predictions)} predictions")
 
-    def get_top_deals(self, limit: int = 100, min_deal_score: float = 0.0) -> pd.DataFrame:
+    def _graded(self, *entities):
+        """Active listings with a deal score, at or above the price floor.
+        The floor is applied here too because predictions are upserted and
+        never deleted, so rows scored before the floor existed linger."""
+        return (
+            self.session.query(*entities)
+            .join(Prediction, CarListing.listing_id == Prediction.listing_id)
+            .filter(
+                CarListing.is_active == True,  # noqa: E712
+                CarListing.price >= MIN_PRICE,
+                Prediction.deal_score.isnot(None),
+            )
+        )
+
+    def count_graded(self) -> int:
+        return int(self._graded(func.count(CarListing.id)).scalar() or 0)
+
+    def get_top_deals(self, limit: int | None = 100, min_deal_score: float = 0.0) -> pd.DataFrame:
         """
-        Return best deals currently active.
+        Return best deals currently active; limit=None returns all of them.
 
         deal_score is 0–100 where 100 is best.
         Filter with >= min_deal_score and sort descending.
         """
-        results = (
-            self.session.query(CarListing, Prediction)
-            .join(Prediction, CarListing.listing_id == Prediction.listing_id)
-            .filter(
-                CarListing.is_active == True,  # noqa: E712
-                Prediction.deal_score.isnot(None),
-                Prediction.deal_score >= min_deal_score,
-            )
+        query = (
+            self._graded(CarListing, Prediction)
+            .filter(Prediction.deal_score >= min_deal_score)
             .order_by(Prediction.deal_score.desc())
-            .limit(limit)
-            .all()
         )
+        results = (query.limit(limit) if limit else query).all()
 
         rows = []
         for listing, pred in results:

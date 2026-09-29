@@ -35,8 +35,8 @@ predict_urls = [f"{BASE}/predict?" + urlencode({"make": r.make, "model": r.model
                 "mileage": int(r.mileage), "trim": r.trim or "", "state": r.location_state or ""})
                 for r in cars.itertuples()]
 out = [bench("/api/predict", predict_urls),
-       bench("/api/deals (limit=100)", [f"{BASE}/deals"] * 300),
-       bench("/api/deals?limit=10000 (dashboard)", [f"{BASE}/deals?limit=10000&min_score=0"] * 100, warm=3)]
+       bench("/api/deals?limit=100", [f"{BASE}/deals?limit=100"] * 300),
+       bench("/api/deals?min_score=0 (dashboard, all graded)", [f"{BASE}/deals?min_score=0"] * 100, warm=3)]
 
 df = pd.read_sql("select * from car_listings", con)
 runs = []

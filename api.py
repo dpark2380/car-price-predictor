@@ -64,11 +64,12 @@ def deals():
 
     deal_score is 0–100 where 100 is best deal.
     Query params:
+      - limit: max rows to return (default: all graded listings)
       - min_score: minimum deal_score to include (default 0)
       - make/model: substring filters
       - body: body type filter (e.g. SUV, Sedan, Truck). Use "unknown" for NULLs.
     """
-    limit     = int(request.args.get("limit", 100))
+    limit     = request.args.get("limit", type=int)
     min_score = float(request.args.get("min_score", 0))
     make      = request.args.get("make", "").strip().lower()
     model_q   = request.args.get("model", "").strip().lower()
@@ -78,8 +79,10 @@ def deals():
     try:
         repo = PredictionRepository(session)
 
-        # Pull a bunch, then filter/sort in API
-        df = repo.get_top_deals(limit=max(limit, 5000), min_deal_score=min_score)
+        # make/model/body filter in pandas below, so those need every graded
+        # listing; without them the limit can go straight to SQL.
+        filtered = bool(make or model_q or body_q)
+        df = repo.get_top_deals(limit=None if filtered else limit, min_deal_score=min_score)
         if df is None or df.empty:
             return jsonify([])
 
@@ -110,7 +113,9 @@ def deals():
                 df = df[bt.str.lower().str.contains(body_q, na=False)]
 
         # Best-first
-        df = df.sort_values("deal_score", ascending=False).head(limit)
+        df = df.sort_values("deal_score", ascending=False)
+        if limit:
+            df = df.head(limit)
 
         records = []
         for _, row in df.iterrows():
@@ -179,6 +184,7 @@ def stats():
 
         return jsonify({
             "active_listings": int(repo.count_active()),
+            "graded_listings": PredictionRepository(session).count_graded(),
             "makes":           int(df["make"].nunique()) if "make" in df else 0,
             "models":          int(df["model"].nunique()) if "model" in df else 0,
             "avg_price":       sf(df["price"].mean()) if "price" in df else None,
@@ -241,13 +247,15 @@ def listings():
         if df is None or df.empty:
             return jsonify([])
 
-        pred_df = pred.get_top_deals(limit=99999, min_deal_score=0)
-        if pred_df is not None and not pred_df.empty:
-            df = df.merge(
-                pred_df[["listing_id", "predicted_price", "deal_score", "deal_label"]],
-                on="listing_id",
-                how="left",
-            )
+        # Inner join: only graded listings (unscored ones, e.g. under the
+        # price floor, would otherwise plot as a made-up score of 50).
+        pred_df = pred.get_top_deals(limit=None, min_deal_score=0)
+        if pred_df is None or pred_df.empty:
+            return jsonify([])
+        df = df.merge(
+            pred_df[["listing_id", "predicted_price", "deal_score", "deal_label"]],
+            on="listing_id",
+        )
 
         if len(df) > 800:
             df = df.sample(800, random_state=42)
