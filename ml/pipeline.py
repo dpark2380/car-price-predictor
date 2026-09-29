@@ -502,6 +502,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     fitted: dict[str, Pipeline] = {}
     metrics: dict[str, dict] = {}
     test_preds: dict[str, np.ndarray] = {}
+    val_logs: dict[str, np.ndarray] = {}
 
     # -----------------------------
     # 5) Train + evaluate each candidate
@@ -546,6 +547,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         # ---- validation: the only split selection and calibration look at ----
         # Selection uses uncalibrated val MAE, since the offset is fit on val too.
         val_log = pipe.predict(X_val)
+        val_logs[name] = val_log
         val_mae = float(mean_absolute_error(y_val, np.expm1(val_log)))
         log_cal = float(np.median(val_log - y_val_log.to_numpy()))
 
@@ -626,6 +628,12 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         f"(≈ {abs(np.expm1(-abs(log_calibration)) * 100):.1f}% systematic {direction}prediction corrected)"
     )
 
+    # Typical error per price segment, on val with calibration applied — the
+    # deal score's yardstick (see _deal_score_from_prices).
+    segment_errors = _segment_errors(y_val.to_numpy(), np.expm1(val_logs[best_name] - log_calibration))
+    logger.info("Segment median abs % error (val): " + " | ".join(
+        f"${lo:,.0f}-{'' if hi == float('inf') else f'${hi:,.0f}'}: {err:.1f}%" for lo, hi, err in segment_errors))
+
     # -----------------------------
     # 7) Permutation importance on RAW features (24 cols), validation split
     # -----------------------------
@@ -660,6 +668,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         "metrics": metrics,
         "log_calibration": log_calibration,
         "cohort_stats": full_cohort_stats,
+        "segment_errors": segment_errors,
     }
 
     if model_path:
@@ -725,25 +734,59 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return lo if x < lo else hi if x > hi else x
 
 
-def _deal_score_from_prices(actual: float, predicted: float) -> float:
-    """
-    Map pricing gap to a stable 0–100 score.
+# Price segments (by asking price) for the deal score's error yardstick.
+PRICE_SEGMENTS = [(0, 10_000), (10_000, 20_000), (20_000, 35_000), (35_000, 60_000), (60_000, float("inf"))]
+# 5 Stars needs a discount of this many times the segment's median abs %
+# error. Median |error| is ~0.67 sigma for normal errors, so 3x is ~2 sigma:
+# fewer than 1 in 40 fairly priced cars should look that cheap by model error.
+FIVE_STAR_MULTIPLE = 3.0
+# Used when a model payload has no per-segment errors (trained before they
+# existed). It reproduces the original fixed scale, 5 Stars at a 32% discount
+# (score = 50 + 1.25 * diff_pct).
+DEFAULT_SEGMENT_ERROR_PCT = 32.0 / FIVE_STAR_MULTIPLE
 
-    Let diff_pct = (predicted - actual) / predicted * 100
-      - diff_pct > 0  => under market (good)
-      - diff_pct < 0  => over market (bad)
 
-    We map:
-      diff_pct = +40%  -> 100
-      diff_pct =   0%  -> 50
-      diff_pct = -40%  -> 0
-    and clamp beyond ±40%.
+def _segment_errors(y_true: np.ndarray, y_pred: np.ndarray, min_n: int = 30) -> list[tuple]:
+    """(lo, hi, median abs % error) per PRICE_SEGMENTS bucket, by true price.
+    Buckets with fewer than min_n rows fall back to the overall median."""
+    ape = np.abs(y_pred - y_true) / y_true * 100
+    overall = float(np.median(ape))
+    out = []
+    for lo, hi in PRICE_SEGMENTS:
+        m = (y_true >= lo) & (y_true < hi)
+        out.append((lo, hi, float(np.median(ape[m])) if m.sum() >= min_n else overall))
+    return out
+
+
+def _segment_error_for(price: float, segment_errors: list[tuple] | None) -> float:
+    for lo, hi, err in segment_errors or ():
+        if lo <= price < hi:
+            return err
+    return DEFAULT_SEGMENT_ERROR_PCT
+
+
+def _deal_score_from_prices(actual: float, predicted: float,
+                            segment_error_pct: float = DEFAULT_SEGMENT_ERROR_PCT) -> float:
     """
-    if predicted <= 0:
+    Map the pricing gap to a 0–100 score, measured in units of the model's
+    typical error at this price (segment_error_pct: median abs % error of the
+    model in the listing's price segment).
+
+    Let diff_pct = (predicted - actual) / predicted * 100   (+ = under market)
+    and z = diff_pct / segment_error_pct. Then score = 50 + 40 * z / 3, clamped:
+      z >= +3      -> 90+ (5 Stars): discount is 3x what the model typically gets wrong
+      z >= +1.875  -> 75+ (4 Stars)
+      z  =  0      -> 50 (fair)
+      z <= -3.75   -> 0
+
+    So a 20% discount is 5 Stars where the model is usually within 6%, but
+    only 3 Stars where it is usually off by 17% (cheap cars).
+    """
+    if predicted <= 0 or segment_error_pct <= 0:
         return 50.0
 
     diff_pct = (predicted - actual) / predicted * 100.0  # + = good
-    score = 50.0 + (diff_pct * 1.25)
+    score = 50.0 + 40.0 * diff_pct / (segment_error_pct * FIVE_STAR_MULTIPLE)
     return _clamp(score, 0.0, 100.0)
 
 
@@ -790,6 +833,9 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
         X = _apply_cohort_features(X, cohort_stats)
     log_calibration = payload.get("log_calibration", 0.0)
     preds = np.expm1(model.predict(X) - log_calibration)
+    segment_errors = payload.get("segment_errors")
+    if segment_errors is None:
+        logger.warning("Model has no per-segment errors; scoring on the default scale (retrain to fix)")
 
     # Keep alignment with df rows
     df = df.reset_index(drop=True)
@@ -803,7 +849,10 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
         if not np.isfinite(actual) or actual <= 0:
             continue
 
-        score = _deal_score_from_prices(actual=actual, predicted=predicted)
+        score = _deal_score_from_prices(
+            actual=actual, predicted=predicted,
+            segment_error_pct=_segment_error_for(actual, segment_errors),
+        )
         score = round(score, 1)
 
         results.append(

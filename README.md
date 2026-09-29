@@ -94,15 +94,19 @@ flowchart LR
 
 ## Deal Scoring
 
-Each listing's asking price is compared to the model's predicted fair value (`ml/pipeline.py:728-747`). Only listings priced at or above `MIN_PRICE` ($3,000, `db/models.py:80`) are scored and shown: the model is trained on nothing cheaper.
+Each listing's asking price is compared to the model's predicted fair value, and the gap is measured in units of **how wrong the model typically is at that price** (`ml/pipeline.py:742-790`). Only listings priced at or above `MIN_PRICE` ($3,000, `db/models.py:80`) are scored and shown: the model is trained on nothing cheaper.
 
 ```
 diff_pct = (predicted_price - actual_price) / predicted_price * 100
-score = 50 + diff_pct * 1.25
-score = clamp(score, 0, 100)
+z        = diff_pct / segment_error      # segment_error: median abs % error in this price band
+score    = clamp(50 + 40 * z / 3, 0, 100)
 ```
 
-A positive `diff_pct` (asking price under prediction) raises the score; a negative one lowers it. `0%` maps to 50, `+20%` under market maps to 75 (4 Stars), `+32%` to 90 (5 Stars), and `+40%` or more to 100. `-40%` or worse maps to 0.
+`segment_error` is the selected model's median absolute % error on the **validation** split, per price band (under $10k, $10-20k, $20-35k, $35-60k, over $60k, by asking price). It is saved with the model at every retrain. On the current snapshot it runs from about 7% ($20-35k) to 20% (under $10k).
+
+5 Stars needs a discount of at least **3x the band's typical error**. For roughly normal errors the median absolute error is about 0.67 sigma, so 3x is about 2 sigma: fewer than 1 in 40 fairly priced cars should look that cheap from model error alone. The same 20% discount is therefore 5 Stars on a $25k car (typical error ~7%) but only 3 Stars on an $8k car (~20%). Cheap cars stay listed and graded; they just need a much bigger discount before the grade claims a steal. On the current snapshot this cut 5-Star listings from 210 (73% under $10k) to 119 (2 under $10k).
+
+A model saved before per-band errors existed falls back to a flat scale with 5 Stars at a 32% discount, which is the original formula (`50 + 1.25 * diff_pct`).
 
 | Score | Label |
 |---|---|
