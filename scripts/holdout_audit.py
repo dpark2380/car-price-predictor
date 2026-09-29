@@ -1,124 +1,115 @@
 """
-scripts/holdout_audit.py — Held-out error, price-segment breakdown and deal-flag
-rates for the saved model. Read-only.
+scripts/holdout_audit.py — reproducible held-out evaluation of all four candidates.
+Writes outputs/holdout_metrics.json. Saves no model (models/ is untouched).
 
-Run: PYTHONPATH=. python3 scripts/holdout_audit.py [--candidates]
+Run: PYTHONPATH=. python3 scripts/holdout_audit.py [--as-of "YYYY-MM-DD HH:MM:SS"]
 
-Reproduces ml/pipeline.py train()'s input + VIN-grouped 80/20 split *as of the model's
-training time*: reads training_pool_v and re-applies the last_seen window at
-trained_at (training_listings_v's window rolls with 'now', so re-running the
-split "now" silently mixes training rows into the test set). Asserts the
-reproduced cohort stats equal the saved ones.
---candidates also refits linear / relaxed_lasso / rf on the same split.
+Retrains Linear / Relaxed Lasso / RF / XGBoost via ml.pipeline.train on
+training_pool_v (one row per VIN) as of --as-of, default the newest last_seen
+in the DB, so a given DB snapshot always yields the same rows. The split is
+train/val/test grouped by VIN: selection and calibration use val only, every
+number reported here is on test. rows_sha256 fingerprints the evaluated rows.
 """
-import json, sys, warnings
-import numpy as np, pandas as pd, joblib
+import argparse, hashlib, json, platform, sys, warnings
+from pathlib import Path
+
+import numpy as np, pandas as pd, sklearn, xgboost
 from sqlalchemy import text
+
 from db.models import init_db, get_session, TRAINING_WINDOW_DAYS
 from db.repository import ListingRepository
-from ml.pipeline import (MODEL_PATH, _build_features_raw, _vin_split,
-                         _kfold_cohort_encode, _apply_cohort_features, _deal_score_from_prices)
+from ml import pipeline
+from ml.pipeline import _vin_groups
+
 warnings.filterwarnings("ignore")
 
-BUCKETS = [("<$10k", 0, 10_000), ("$10-20k", 10_000, 20_000), ("$20-35k", 20_000, 35_000),
-           ("$35-60k", 35_000, 60_000), (">$60k", 60_000, np.inf)]  # same as pipeline.py tiers
+OUT = Path("outputs/holdout_metrics.json")
+SEGMENTS = {"<$10k": (0, 10_000), "$10-20k": (10_000, 20_000), "$20-35k": (20_000, 35_000),
+            "$35-60k": (35_000, 60_000), ">$60k": (60_000, np.inf)}  # by TRUE price
+N_BOOT, SEED = 2000, 42
 
 
-def err_stats(pred, true):
-    ape = np.abs(pred - true) / true * 100
+def ape(pred, true):
+    return np.abs(pred - true) / true * 100
+
+
+def stats(pred, true):
     return {"n": int(len(true)), "mae": round(float(np.mean(np.abs(pred - true))), 1),
-            "median_ape_%": round(float(np.median(ape)), 2), "mean_ape_%": round(float(np.mean(ape)), 2),
-            "within_10pct_%": round(float(np.mean(ape <= 10) * 100), 1)}
+            "median_ape_pct": round(float(np.median(ape(pred, true))), 2)}
 
 
-def main(candidates: bool) -> dict:
-    payload = joblib.load(MODEL_PATH)
-    model, cal = payload["model"], payload["log_calibration"]
-    trained_at = pd.to_datetime(payload["version"], format="%Y%m%d_%H%M")  # UTC
+def boot(a: np.ndarray, b: np.ndarray, rng) -> dict:
+    """95% percentile CIs for median APE of a, of b, and of a - b (paired: same resamples)."""
+    idx = rng.integers(0, len(a), size=(N_BOOT, len(a)))
+    ma, mb = np.median(a[idx], axis=1), np.median(b[idx], axis=1)
+    ci = lambda x: [round(float(v), 2) for v in np.percentile(x, [2.5, 97.5])]
+    d = ci(ma - mb)
+    return {"xgb_ci95": ci(ma), "rf_ci95": ci(mb), "xgb_minus_rf": round(float(np.median(a) - np.median(b)), 2),
+            "xgb_minus_rf_ci95": d, "difference_significant": not (d[0] <= 0 <= d[1])}
 
+
+def main(as_of: str | None) -> dict:
     session = get_session(init_db())
     con = session.connection()
-    cutoff = {"cutoff": str(trained_at - pd.Timedelta(days=TRAINING_WINDOW_DAYS))}
-    df = pd.read_sql(text("select * from training_pool_v where last_seen >= :cutoff order by id"),
-                     con, params=cutoff)
-    # score_job's (looser) input as of training time, for segment shares
-    price_all = pd.read_sql(text("select price from car_listings where price > 500 and year is not null "
-                                 "and mileage is not null and last_seen >= :cutoff"), con, params=cutoff).price.to_numpy()
+    if as_of is None:
+        as_of = con.execute(text("select max(last_seen) from car_listings")).scalar()
+    cutoff = str(pd.Timestamp(as_of) - pd.Timedelta(days=TRAINING_WINDOW_DAYS))
+    df = pd.read_sql(text("select * from training_pool_v where last_seen >= :c order by id"), con,
+                     params={"c": cutoff}, parse_dates=["first_seen", "last_seen"])
 
-    # --- same VIN-grouped split as train() ---
-    X_train, X_test, y_train, y_test = _vin_split(_build_features_raw(df), df["price"], df)
-    stats = ListingRepository(session).get_cohort_stats(df.loc[X_train.index, "id"])
-    X_train_enc = _kfold_cohort_encode(X_train, y_train)
-    if not stats.equals(payload["cohort_stats"]):
-        sys.exit("Split not reproduced: DB changed since the model was trained (retrain, or restore the DB).")
-    X_test = _apply_cohort_features(X_test, stats)
-    yt = y_test.to_numpy()
-    p_raw = np.expm1(model.predict(X_test))          # what train() logs
-    p = np.expm1(model.predict(X_test) - cal)        # what production serves
+    result = pipeline.train(df, ListingRepository(session), model_path=None)
+    if result is None:
+        sys.exit("Training did not run (too few rows).")
 
-    out = {"version": payload["version"], "rows": len(df), "test_rows": len(yt),
-           "mae_reproduced": round(float(np.mean(np.abs(p_raw - yt))), 2),
-           "mae_logged": round(payload["metrics"][payload["selected_model"]]["mae"], 2),
-           "overall": err_stats(p, yt)}
+    # --- split integrity: no car in two splits ---
+    groups = _vin_groups(df).to_numpy()
+    sets = {k: set(groups[v]) for k, v in result["split"].items()}
+    overlap = {"train_val": len(sets["train"] & sets["val"]), "train_test": len(sets["train"] & sets["test"]),
+               "val_test": len(sets["val"] & sets["test"])}
+    assert sum(overlap.values()) == 0, f"VIN overlap across splits: {overlap}"
 
-    out["segments"] = {lab: err_stats(p[(yt >= lo) & (yt < hi)], yt[(yt >= lo) & (yt < hi)])
-                       | {"share_of_all_scored_%": round(float(((price_all >= lo) & (price_all < hi)).mean() * 100), 1)}
-                       for lab, lo, hi in BUCKETS}
+    yt, preds = result["y_test"], result["test_preds"]
+    models = {}
+    for name, p in preds.items():
+        m = result["metrics"][name]
+        models[name] = {"val_mae": round(m["val_mae"], 1), "log_calibration_from_val": round(m["log_calibration"], 4),
+                        "test": stats(p, yt),
+                        "test_segments": {lab: stats(p[(yt >= lo) & (yt < hi)], yt[(yt >= lo) & (yt < hi)])
+                                          for lab, (lo, hi) in SEGMENTS.items()}}
 
-    # --- deal flags (4 stars = score>=75 = asking >=20% under predicted; 5 stars = >=90 = >=32%) ---
-    score = np.array([_deal_score_from_prices(a, b) for a, b in zip(yt, p)])
-    p_tr = np.expm1(model.predict(_apply_cohort_features(X_train, stats)) - cal)
-    score_tr = np.array([_deal_score_from_prices(a, b) for a, b in zip(y_train, p_tr)])
-    rate = lambda s: {"4+_stars_%": round(float(np.mean(s >= 75) * 100), 2),
-                      "5_stars_%": round(float(np.mean(s >= 90) * 100), 2)}
-    out["flag_rate_heldout"] = rate(score)
-    out["flag_rate_train_rows_insample"] = rate(score_tr)
+    rng = np.random.default_rng(SEED)
+    seg = (yt >= 20_000) & (yt < 35_000)
+    a, b = ape(preds["xgb"], yt), ape(preds["rf"], yt)
+    bootstrap = {"resamples": N_BOOT, "seed": SEED, "overall": boot(a, b, rng), "$20-35k": boot(a[seg], b[seg], rng)}
 
-    # Independent proxy: median of comparable TRAINING listings (same make/model,
-    # year +/-1, mileage +/-25% (+5k), >=3 comps). No labelled "true deals" exist.
-    tr = X_train[["make", "model", "year", "mileage"]].assign(price=y_train.to_numpy())
-    groups = {k: g for k, g in tr.groupby(["make", "model"])}
-    te = X_test[["make", "model", "year", "mileage", "cohort_count"]].assign(price=yt, score=score)
+    val_winner = min(models, key=lambda k: models[k]["val_mae"])
+    test_winner = min(models, key=lambda k: models[k]["test"]["median_ape_pct"])
+    fingerprint = pd.util.hash_pandas_object(df[["id", "vin", "price", "mileage", "last_seen"]], index=False)
 
-    def comp_median(r):
-        g = groups.get((r.make, r.model))
-        if g is None:
-            return np.nan
-        g = g[(g.year.sub(r.year).abs() <= 1) & g.mileage.between(r.mileage * 0.75, r.mileage * 1.25 + 5000)]
-        return g.price.median() if len(g) >= 3 else np.nan
-
-    te["comp"] = te.apply(comp_median, axis=1)
-    below = (te.comp - te.price) / te.comp * 100
-
-    def proxy(mask):
-        b = below[mask & te.comp.notna()]
-        return {"n": int(mask.sum()), "n_with_comps": int(len(b)),
-                ">=10%_below_comps_%": round(float((b >= 10).mean() * 100), 1),
-                ">=20%_below_comps_%": round(float((b >= 20).mean() * 100), 1),
-                "thin_cohort(<5)_%": round(float((te.cohort_count[mask] < 5).mean() * 100), 1)}
-    out["deal_proxy_4plus"] = proxy(te.score >= 75)
-    out["deal_proxy_5star"] = proxy(te.score >= 90)
-    out["deal_proxy_baseline_all"] = proxy(te.score > -1)
-
-    if candidates:
-        from sklearn.base import clone
-        from sklearn.pipeline import Pipeline
-        from sklearn.linear_model import LinearRegression
-        from sklearn.ensemble import RandomForestRegressor
-        from ml.pipeline import RelaxedLasso
-        cands = {"linear": LinearRegression(), "relaxed_lasso": RelaxedLasso(cv=5, max_iter=10000, tol=1e-3),
-                 "rf": RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1, min_samples_leaf=2)}
-        out["candidates"] = {payload["selected_model"] + " (saved)": err_stats(p_raw, yt)}
-        for name, est in cands.items():
-            if name == payload["selected_model"]:
-                continue
-            pipe = Pipeline([("preprocess", clone(model.named_steps["preprocess"])), ("model", est)])
-            pipe.fit(X_train_enc, np.log1p(y_train))
-            out["candidates"][name] = err_stats(np.expm1(pipe.predict(X_test)), yt)
-    return out
+    return {
+        "as_of": str(as_of), "training_window_days": TRAINING_WINDOW_DAYS,
+        "rows_sha256": hashlib.sha256(fingerprint.to_numpy().tobytes()).hexdigest(),
+        "split": {"method": "GroupShuffleSplit by VIN: test 20%, then val 20% of the rest (64/16/20)",
+                  "seed": 42, "unique_vehicles": {k: len(s) for k, s in sets.items()},
+                  "rows": {k: int(len(v)) for k, v in result["split"].items()},
+                  "vins_in_more_than_one_split": overlap},
+        "metric": "median_ape_pct = median(|pred - true| / true) * 100 on test; mae in $. "
+                  "Predictions include the val-fitted calibration offset, as production serves them. "
+                  "Segments filter on TRUE price.",
+        "selected_model": result["selected_model"],
+        "selection": {"rule": "lowest val MAE (uncalibrated)", "val_mae_winner": val_winner,
+                      "test_median_ape_winner": test_winner, "agree": val_winner == test_winner},
+        "models": models,
+        "bootstrap_median_ape_xgb_vs_rf": bootstrap,
+        "versions": {"python": platform.python_version(), "sklearn": sklearn.__version__,
+                     "xgboost": xgboost.__version__, "numpy": np.__version__, "pandas": pd.__version__},
+    }
 
 
 if __name__ == "__main__":
-    result = main("--candidates" in sys.argv)
-    assert abs(result["mae_reproduced"] - result["mae_logged"]) < 1, "reproduced MAE != logged MAE"
-    print(json.dumps(result, indent=1))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--as-of", help="evaluate the training pool as of this UTC time (default: newest last_seen)")
+    out = main(ap.parse_args().as_of)
+    OUT.parent.mkdir(exist_ok=True)
+    OUT.write_text(json.dumps(out, indent=1) + "\n")
+    print(json.dumps(out, indent=1))
