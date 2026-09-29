@@ -309,22 +309,33 @@ def _kfold_cohort_encode(X: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> pd
     return X
 
 
-def _vin_split(X: pd.DataFrame, y: pd.Series, df: pd.DataFrame):
-    """
-    80/20 train/test split grouped by VIN, so no car lands on both sides.
-    training_pool_v already keeps one row per VIN; this is the safeguard if
-    that ever regresses. Rows without a VIN are their own group.
-    """
+def _vin_groups(df: pd.DataFrame) -> pd.Series:
+    """One group per car: the VIN, or the listing id when there is no VIN."""
     vin = df["vin"].fillna("")
-    groups = vin.where(vin != "", "listing:" + df["listing_id"].astype(str))
-    splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
-    train_idx, test_idx = next(splitter.split(X, y, groups))
-    return X.iloc[train_idx], X.iloc[test_idx], y.iloc[train_idx], y.iloc[test_idx]
+    return vin.where(vin != "", "listing:" + df["listing_id"].astype(str))
 
 
-def train(df: pd.DataFrame, repo) -> dict | None:
+def _vin_split(df: pd.DataFrame, seed: int = 42):
+    """
+    Positional train/val/test indices (64/16/20), grouped by VIN so no car
+    lands in two splits. Test is carved first, then val from the remainder.
+    training_pool_v already keeps one row per VIN; grouping is the safeguard
+    if that ever regresses.
+    """
+    groups = _vin_groups(df).to_numpy()
+    idx = np.arange(len(df))
+    rest, test = next(GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=seed).split(idx, groups=groups))
+    tr, val = next(GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=seed).split(rest, groups=groups[rest]))
+    return rest[tr], rest[val], test
+
+
+def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict | None:
     """df: rows from ListingRepository.get_training_listings_df; repo: that
-    ListingRepository, used to compute cohort stats in SQL."""
+    ListingRepository, used to compute cohort stats in SQL. model_path=None
+    trains and evaluates without saving (scripts/holdout_audit.py).
+
+    The test split is touched once, for reporting: model selection and the
+    calibration offset both use the validation split."""
     logger.info("Starting model training run…")
 
     # -----------------------------
@@ -341,17 +352,20 @@ def train(df: pd.DataFrame, repo) -> dict | None:
     X_raw = _build_features_raw(df)
     y = df["price"]
 
-    X_train, X_test, y_train, y_test = _vin_split(X_raw, y, df)
+    tr, va, te = _vin_split(df)
+    X_train, X_val, X_test = X_raw.iloc[tr], X_raw.iloc[va], X_raw.iloc[te]
+    y_train, y_val, y_test = y.iloc[tr], y.iloc[va], y.iloc[te]
 
     # Full cohort stats (SQL, training split only) are saved for inference;
     # training rows get k-fold out-of-fold encoding — no leakage.
-    full_cohort_stats = repo.get_cohort_stats(df.loc[X_train.index, "id"])
+    full_cohort_stats = repo.get_cohort_stats(df["id"].iloc[tr])
     X_train = _kfold_cohort_encode(X_train, y_train)
+    X_val = _apply_cohort_features(X_val, full_cohort_stats)
     X_test = _apply_cohort_features(X_test, full_cohort_stats)
 
     # log-space targets (this is what we train on)
     y_train_log = np.log1p(y_train)
-    y_test_log = np.log1p(y_test)
+    y_val_log = np.log1p(y_val)
 
     # -----------------------------
     # 3) Preprocess
@@ -487,6 +501,7 @@ def train(df: pd.DataFrame, repo) -> dict | None:
 
     fitted: dict[str, Pipeline] = {}
     metrics: dict[str, dict] = {}
+    test_preds: dict[str, np.ndarray] = {}
 
     # -----------------------------
     # 5) Train + evaluate each candidate
@@ -528,8 +543,14 @@ def train(df: pd.DataFrame, repo) -> dict | None:
         pred_train_log = pipe.predict(X_train)
         train_rmse_log = float(np.sqrt(mean_squared_error(y_train_log.to_numpy(), pred_train_log)))
 
-        # ---- test metrics in $ space ----
-        pred_test = np.expm1(pipe.predict(X_test))
+        # ---- validation: the only split selection and calibration look at ----
+        # Selection uses uncalibrated val MAE, since the offset is fit on val too.
+        val_log = pipe.predict(X_val)
+        val_mae = float(mean_absolute_error(y_val, np.expm1(val_log)))
+        log_cal = float(np.median(val_log - y_val_log.to_numpy()))
+
+        # ---- test metrics in $ space, calibrated as production serves them ----
+        pred_test = np.expm1(pipe.predict(X_test) - log_cal)
         y_true = y_test.to_numpy()
         mae, rmse = _eval(y_true, pred_test)
 
@@ -542,7 +563,10 @@ def train(df: pd.DataFrame, repo) -> dict | None:
         nonlux_mae = float(np.mean(np.abs(pred_test[~test_is_lux] - y_true[~test_is_lux]))) if nonlux_n > 0 else float("nan")
 
         fitted[name] = pipe
+        test_preds[name] = pred_test
         metrics[name] = {
+            "val_mae": val_mae,
+            "log_calibration": log_cal,
             "mae": mae,
             "rmse": rmse,
             "train_rmse_log": train_rmse_log,
@@ -553,7 +577,7 @@ def train(df: pd.DataFrame, repo) -> dict | None:
         }
 
         logger.info(
-            f"Candidate {name} | MAE=${mae:,.0f} RMSE=${rmse:,.0f} | "
+            f"Candidate {name} | val MAE=${val_mae:,.0f} | test MAE=${mae:,.0f} RMSE=${rmse:,.0f} | "
             f"trainRMSE(log)={train_rmse_log:.4f} | "
             f"luxury=${lux_mae:,.0f} (n={lux_n}) nonlux=${nonlux_mae:,.0f} (n={nonlux_n})"
         )
@@ -579,35 +603,37 @@ def train(df: pd.DataFrame, repo) -> dict | None:
             _tier_parts.append(f"{_label} ${_tier_mae:,.0f} ({_tier_pct:.0f}%,n={_n})")
         logger.info("  tiers | " + " | ".join(_tier_parts))
 
-    # pick best by MAE
-    best_name = min(metrics.keys(), key=lambda k: metrics[k]["mae"])
+    # pick best by validation MAE — never by test
+    best_name = min(metrics.keys(), key=lambda k: metrics[k]["val_mae"])
     pipe = fitted[best_name]
     best = metrics[best_name]
 
-    logger.info(f"Selected model: {best_name} | MAE=${best['mae']:,.0f} RMSE=${best['rmse']:,.0f}")
+    logger.info(
+        f"Selected model: {best_name} | val MAE=${best['val_mae']:,.0f} | "
+        f"test MAE=${best['mae']:,.0f} RMSE=${best['rmse']:,.0f}"
+    )
 
     # -----------------------------
     # 6) Calibration — correct systematic bias in log space
     # -----------------------------
-    # Compute median residual on training set. Subtracting this from future
-    # log-space predictions ensures the median training error is zero, giving
-    # a balanced mix of positive and negative savings at scoring time.
-    test_log_preds = pipe.predict(X_test)
-    log_calibration = float(np.median(test_log_preds - y_test_log.to_numpy()))
+    # Median log residual on the validation split. Subtracting it from future
+    # log-space predictions centres the errors, giving a balanced mix of
+    # positive and negative savings at scoring time.
+    log_calibration = best["log_calibration"]
     direction = "over" if log_calibration > 0 else "under"
     logger.info(
-        f"Calibration offset (log, test set): {log_calibration:.4f}  "
+        f"Calibration offset (log, val set): {log_calibration:.4f}  "
         f"(≈ {abs(np.expm1(-abs(log_calibration)) * 100):.1f}% systematic {direction}prediction corrected)"
     )
 
     # -----------------------------
-    # 7) Permutation importance on RAW features (24 cols)
+    # 7) Permutation importance on RAW features (24 cols), validation split
     # -----------------------------
     try:
         pi = permutation_importance(
             pipe,
-            X_test,                  # raw features
-            y_test_log,              # log target (matches training)
+            X_val,                   # raw features
+            y_val_log,               # log target (matches training)
             n_repeats=5,
             random_state=42,
             n_jobs=-1,
@@ -615,7 +641,7 @@ def train(df: pd.DataFrame, repo) -> dict | None:
         )
 
         imp = (
-            pd.Series(pi.importances_mean, index=X_test.columns)
+            pd.Series(pi.importances_mean, index=X_val.columns)
             .sort_values(ascending=False)
         )
         logger.info("Top permutation importances (raw features):\n" + imp.head(20).to_string())
@@ -636,8 +662,9 @@ def train(df: pd.DataFrame, repo) -> dict | None:
         "cohort_stats": full_cohort_stats,
     }
 
-    os.makedirs("models", exist_ok=True)
-    joblib.dump(payload, MODEL_PATH)
+    if model_path:
+        os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+        joblib.dump(payload, model_path)
 
     logger.info("\n" + "="*72)
     logger.info(f"MODEL TRAINING SUMMARY  |  Version: {version}")
@@ -658,8 +685,7 @@ def train(df: pd.DataFrame, repo) -> dict | None:
 
     logger.info(f"SELECTED MODEL → {best_name.upper()}")
     logger.info(f"Rows after cleaning: {len(df)}")
-    logger.info(f"Train rows: {len(X_train)} | Test rows: {len(X_test)}")
-    logger.info(f"Train/Test split: {len(X_train)}/{len(X_test)}")
+    logger.info(f"Train/Val/Test split (VIN-grouped): {len(X_train)}/{len(X_val)}/{len(X_test)}")
     logger.info("="*72 + "\n")
 
     xgb_lr = candidates["xgb"].learning_rate
@@ -671,9 +697,15 @@ def train(df: pd.DataFrame, repo) -> dict | None:
         "metrics":        metrics,
         "n":              int(len(df)),
         "train_rows":     int(len(X_train)),
+        "val_rows":       int(len(X_val)),
         "test_rows":      int(len(X_test)),
         "xgb_lr":         xgb_lr,
         "xgb_n_estimators": xgb_n,
+        # for scripts/holdout_audit.py: positional split indices into df and
+        # calibrated test predictions per candidate
+        "split":          {"train": tr, "val": va, "test": te},
+        "y_test":         y_test.to_numpy(),
+        "test_preds":     test_preds,
     }
 
 
@@ -702,10 +734,10 @@ def _deal_score_from_prices(actual: float, predicted: float) -> float:
       - diff_pct < 0  => over market (bad)
 
     We map:
-      diff_pct = +20%  -> 100
+      diff_pct = +40%  -> 100
       diff_pct =   0%  -> 50
-      diff_pct = -20%  -> 0
-    and clamp beyond ±20%.
+      diff_pct = -40%  -> 0
+    and clamp beyond ±40%.
     """
     if predicted <= 0:
         return 50.0
