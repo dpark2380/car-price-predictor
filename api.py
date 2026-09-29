@@ -18,8 +18,13 @@ app = Flask(__name__)
 CORS(app)
 
 
+# Once per process: init_db also syncs the SQL views (DROP/CREATE), and running
+# that per request let the dashboard's concurrent /deals + /stats calls race
+# ("view already exists" -> 500) on a DB that didn't have the views yet.
+engine = init_db()
+
+
 def get_db():
-    engine = init_db()
     return get_session(engine)
 
 
