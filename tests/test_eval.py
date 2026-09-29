@@ -1,5 +1,6 @@
 """
-tests/test_eval.py — VIN-grouped split and the scoring price floor.
+tests/test_eval.py — VIN-grouped split, scoring price floor, and the
+segment-scaled deal score.
 Run: PYTHONPATH=. python3 tests/test_eval.py
 """
 from datetime import datetime
@@ -9,7 +10,8 @@ import pandas as pd
 
 from db.models import init_db, get_session, CarListing, Prediction, MIN_PRICE
 from db.repository import ListingRepository, PredictionRepository
-from ml.pipeline import _vin_split, _vin_groups
+from ml.pipeline import (_vin_split, _vin_groups, _deal_score_from_prices, _deal_label,
+                         _segment_errors, _segment_error_for)
 
 
 def test_vin_split_disjoint():
@@ -41,7 +43,33 @@ def test_price_floor():
     assert preds.count_graded() == 1
 
 
+def test_deal_score_scales_with_segment_error():
+    # default scale is the original fixed formula: 50 + 1.25 * diff_pct
+    for actual in (6000, 8000, 10000, 12000):
+        diff = (10000 - actual) / 10000 * 100
+        assert abs(_deal_score_from_prices(actual, 10000) - min(100, max(0, 50 + 1.25 * diff))) < 1e-9
+    # same 20% discount: 5 stars where the model is usually within 6%, 3 stars at 17%
+    assert _deal_label(_deal_score_from_prices(8000, 10000, 6.0)) == "5 Stars"
+    assert _deal_label(_deal_score_from_prices(8000, 10000, 17.0)) == "3 Stars"
+    # 5 stars needs a discount of at least 3x the segment error
+    assert _deal_label(_deal_score_from_prices(8200, 10000, 6.0)) == "5 Stars"   # 18% = 3x
+    assert _deal_label(_deal_score_from_prices(8300, 10000, 6.0)) != "5 Stars"   # 17%
+
+
+def test_segment_errors():
+    true = np.array([5000.0] * 40 + [25000.0] * 40 + [80000.0] * 3)
+    pred = true * np.array([1.2] * 40 + [1.05] * 40 + [1.5] * 3)
+    errs = _segment_errors(true, pred)
+    assert abs(_segment_error_for(5000, errs) - 20) < 1e-6
+    assert abs(_segment_error_for(25000, errs) - 5) < 1e-6
+    overall = float(np.median(np.abs(pred - true) / true * 100))
+    assert abs(_segment_error_for(80000, errs) - overall) < 1e-6   # only 3 rows: falls back
+    assert abs(_segment_error_for(25000, None) - 32 / 3) < 1e-9     # old payloads
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
+    test_deal_score_scales_with_segment_error()
+    test_segment_errors()
     print("ok")
