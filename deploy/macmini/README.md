@@ -6,7 +6,7 @@ LaunchDaemons, so they survive reboots without anyone logging in.
 
 | Service | Label | What |
 |---|---|---|
-| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py --once` every 129,600 s (36h) |
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` every 129,600 s (36h) |
 | API | `com.carintel.api` | gunicorn, 1 worker x 4 threads, port 5001, restarted if it dies |
 | Dashboard | `com.carintel.web` | static `frontend/build` on port 3000 |
 

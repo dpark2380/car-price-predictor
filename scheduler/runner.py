@@ -1,5 +1,8 @@
 """
-scheduler/runner.py — Orchestrates scrape → score → train jobs
+scheduler/runner.py — Runs scrape → train → score → popularity once, then exits.
+
+No flag runs all four; --scrape-only / --train-only / --score-only run one.
+Scheduling lives outside this script (launchd, see deploy/macmini/).
 """
 
 import argparse
@@ -207,7 +210,6 @@ def run_all(engine):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true")
     parser.add_argument("--scrape-only", action="store_true")
     parser.add_argument("--train-only", action="store_true")
     parser.add_argument("--score-only", action="store_true")
