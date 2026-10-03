@@ -20,19 +20,19 @@ it has been copied.
 ```bash
 launchctl bootout gui/$(id -u)/com.danielpark.carpricepredictor
 mv ~/Library/LaunchAgents/com.danielpark.carpricepredictor.plist ~/   # keep it, just unloaded
-./deploy/macmini/bundle-state.sh            # -> ~/Desktop/car-intel-state-<date>/
+./deploy/macmini/bundle-state.sh            # -> ~/Desktop/car-intel-state-YYYYMMDD-HHMM/
 ```
 
-AirDrop the `car-intel-state-<date>` folder to the mini. It contains your
+AirDrop the `car-intel-state-...` folder to the mini. It contains your
 Marketcheck key (`.env`), so don't upload it anywhere else.
 
 **On the Mac mini**
 
 ```bash
-brew install python@3.14 node
+brew install python@3.14 node libomp     # libomp: XGBoost needs it on macOS
 git clone git@github.com:dpark2380/Car-Price-Predictor.git ~/car-intel   # not under ~/Documents
 cd ~/car-intel
-./deploy/macmini/setup.sh ~/Downloads/car-intel-state-<date>
+./deploy/macmini/setup.sh ~/Downloads/car-intel-state-*     # bundle path only on the first run
 sudo ./deploy/macmini/install.sh
 ```
 

@@ -3,6 +3,9 @@
 #
 #   ./deploy/macmini/setup.sh [path-to-state-bundle]
 #
+# Pass the bundle only on the first run; re-runs without it reuse the
+# restored state (it refuses to overwrite an existing car_intel.db).
+#
 # Restores the AirDropped state bundle (if given), builds the Python venv and
 # the dashboard, runs the tests, and renders the launchd plists into
 # deploy/macmini/out/. Then run:  sudo ./deploy/macmini/install.sh
@@ -22,8 +25,10 @@ case "$REPO" in
 esac
 
 for tool in python3.14 npm sqlite3; do
-  command -v "$tool" >/dev/null || { echo "Missing $tool (brew install python@3.14 node)" >&2; exit 1; }
+  command -v "$tool" >/dev/null || { echo "Missing $tool (brew install python@3.14 node libomp)" >&2; exit 1; }
 done
+# XGBoost's macOS build links the OpenMP runtime; without it the import fails.
+brew list libomp >/dev/null 2>&1 || { echo "Missing libomp, which XGBoost needs: brew install libomp" >&2; exit 1; }
 
 # ── 1. State bundle ──────────────────────────────────────────────────────────
 if [ $# -ge 1 ]; then
