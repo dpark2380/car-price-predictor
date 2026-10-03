@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: setup.sh fills in __REPO__ and __USER__. Scrape -> train -> score every 36h. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.carintel.pipeline</string>
+
+    <!-- LaunchDaemon run as your user: works after a reboot with nobody logged in. -->
+    <key>UserName</key>
+    <string>__USER__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/venv/bin/python</string>
+        <string>scheduler/runner.py</string>
+        <string>--once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>__REPO__</string>
+        <key>HOME</key>
+        <string>/Users/__USER__</string>
+    </dict>
+
+    <key>StartInterval</key>
+    <integer>129600</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/launchd_stderr.log</string>
+</dict>
+</plist>

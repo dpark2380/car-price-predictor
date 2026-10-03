@@ -30,3 +30,6 @@ data/zip_cursor.json
 data/main_zip_cursor.json
 data/cursors/
 data
+
+# Mac mini deploy: plists rendered by deploy/macmini/setup.sh
+deploy/macmini/out/
