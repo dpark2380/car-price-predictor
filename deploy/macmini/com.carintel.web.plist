@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: setup.sh fills in __REPO__ and __USER__. Serves the built dashboard on :3000. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.carintel.web</string>
+
+    <key>UserName</key>
+    <string>__USER__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/venv/bin/python</string>
+        <string>-m</string>
+        <string>http.server</string>
+        <string>3000</string>
+        <string>--directory</string>
+        <string>__REPO__/frontend/build</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/web.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/web.log</string>
+</dict>
+</plist>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: setup.sh fills in __REPO__ and __USER__. Flask API on :5001, restarted if it dies. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.carintel.api</string>
+
+    <key>UserName</key>
+    <string>__USER__</string>
+
+    <!-- One worker, threaded: api.py syncs SQL views at import, and several
+         worker processes importing at once could race on that DDL. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/venv/bin/gunicorn</string>
+        <string>--workers</string>
+        <string>1</string>
+        <string>--threads</string>
+        <string>4</string>
+        <string>--bind</string>
+        <string>0.0.0.0:5001</string>
+        <string>api:app</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>__REPO__</string>
+        <key>HOME</key>
+        <string>/Users/__USER__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/api.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/api.log</string>
+</dict>
+</plist>
