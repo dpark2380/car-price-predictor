@@ -151,11 +151,11 @@ npm start
 
 ### Scheduling
 
-In production, retraining is triggered by a macOS launchd job that is **not part of this repo** (`~/Library/LaunchAgents/com.danielpark.carpricepredictor.plist`), running `scheduler/runner.py --once` on a `StartInterval` of 129600 seconds (36 hours). The job runs the repo's `venv/bin/python3`, so it needs the step-1 virtualenv to exist. Without it, launchd fails silently with exit code 78 (check with `launchctl print gui/$(id -u)/com.danielpark.carpricepredictor`). Cron cannot express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical cron equivalent is a daily run:
+In production, retraining is triggered by a macOS launchd job that is **not part of this repo** (`~/Library/LaunchAgents/com.danielpark.carpricepredictor.plist`), running `scheduler/runner.py` on a `StartInterval` of 129600 seconds (36 hours). The job runs the repo's `venv/bin/python3`, so it needs the step-1 virtualenv to exist. Without it, launchd fails silently with exit code 78 (check with `launchctl print gui/$(id -u)/com.danielpark.carpricepredictor`). Cron cannot express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical cron equivalent is a daily run:
 
 ```cron
 # crontab -e — daily approximation of the launchd job (not an exact 36h match)
-0 3 * * * cd /path/to/Car-Price-Predictor && PYTHONPATH=. venv/bin/python3 scheduler/runner.py --once >> logs/cron.log 2>&1
+0 3 * * * cd /path/to/Car-Price-Predictor && PYTHONPATH=. venv/bin/python3 scheduler/runner.py >> logs/cron.log 2>&1
 ```
 
 ---

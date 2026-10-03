@@ -88,7 +88,7 @@ never seen 10,000 listings.
 **Refreshed, but manually. There is no scheduler.**
 
 `scheduler/runner.py` is a one-shot argparse CLI, not a daemon:
-- `scheduler/runner.py:173-179` — `--once`, `--scrape-only`, `--train-only`, `--score-only`
+- `scheduler/runner.py:173-179` — `--scrape-only`, `--train-only`, `--score-only`
 - `scheduler/runner.py:159-170` — `run_all()` executes scrape → train → score → popularity once and returns
 - `scheduler/runner.py:217-218` — `if __name__ == "__main__": main()`
 
