@@ -31,7 +31,7 @@
     <integer>129600</integer>
 
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 
     <key>StandardOutPath</key>
     <string>__REPO__/logs/launchd_stdout.log</string>
