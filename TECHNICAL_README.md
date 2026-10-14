@@ -33,10 +33,10 @@ $$\min \sum_{i=1}^n \left(y_i - \hat{f}(x_i)\right)^2$$
 **Our implementation:**
 
 ```python
-objective="reg:absoluteerror"
+objective="reg:squarederror"
 ```
 
-We explicitly use **MAE** instead of MSE. This is a deliberate domain choice — car pricing has expensive outliers (low-mileage luxury trims, rare configurations) and MSE would square those residuals, forcing the model to over-fit to them. MAE weights all errors linearly, making the ensemble more robust across the full price range.
+Squared error is applied to the **log** price, so a residual is roughly a percentage error and an expensive car's dollar error isn't squared. We used absolute error (MAE) until 2026-10-14; see section 14.2.
 
 The forward stagewise math still applies — the residuals being fit are just $|r_i|$-weighted rather than $r_i^2$-weighted.
 
@@ -180,7 +180,7 @@ After training, we compute the median systematic bias on the validation split (i
 
 | Parameter | Theory example | Our value |
 |---|---|---|
-| `objective` | `reg:squarederror` (MSE) | `reg:absoluteerror` (MAE) |
+| `objective` | `reg:squarederror` (MSE) | `reg:squarederror` on log price |
 | `n_estimators` (M) | 500 | **grid-searched** over [500, 1000, 1500, 2000] then early-stopped |
 | `learning_rate` (eta) | 0.1 | **grid-searched** over [0.01, 0.03, 0.05, 0.1] |
 | `max_depth` | 3 | **6** |
@@ -500,13 +500,13 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 ---
 
-### 14.2 MAE Loss Instead of MSE
+### 14.2 Squared Error on the Log Target (was MAE Loss)
 
-**Change:** `objective="reg:absoluteerror"` instead of the default `reg:squarederror`.
+**Change:** `objective="reg:squarederror"`. From the start until 2026-10-14 the model used `reg:absoluteerror`.
 
-**Why:** MSE squares residuals, over-weighting expensive outliers (low-mileage luxury trims, rare configurations). MAE weights all errors linearly, making the ensemble more robust across the full price range.
+**Why:** MAE loss was chosen so expensive outliers wouldn't dominate, but the target is already log price, where squared error penalises relative rather than dollar error. Switching back on the 2026-10-14 data: test MAE $3,754 → $3,318 (val $3,788 → $3,321), median abs % error 8.8% → 8.2%, under-$10k 18.2% → 15.7%, luxury MAE $5,183 → $4,624, non-luxury $3,075 → $2,697. `model_research.md` saw the same direction on three VIN splits.
 
-**File:** `ml/pipeline.py` — `XGBRegressor(objective="reg:absoluteerror", ...)`
+**File:** `ml/pipeline.py` — `xgb_fixed_params["objective"]`
 
 ---
 
