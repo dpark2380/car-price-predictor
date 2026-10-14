@@ -11,7 +11,8 @@ import pandas as pd
 from db.models import init_db, get_session, CarListing, Prediction, MIN_PRICE
 from db.repository import ListingRepository, PredictionRepository
 from ml.pipeline import (_vin_split, _vin_groups, _deal_score_from_prices, _deal_label,
-                         _segment_errors, _segment_error_for)
+                         _segment_errors, _segment_error_for,
+                         _dealer_keys, _cohort_ref, _cohort_features)
 
 
 def test_vin_split_disjoint():
@@ -67,9 +68,24 @@ def test_segment_errors():
     assert abs(_segment_error_for(25000, None) - 32 / 3) < 1e-9     # old payloads
 
 
+def test_cohort_features_exclude_own_dealer():
+    df = pd.DataFrame({
+        "make": ["honda"] * 4 + ["ford"], "model": ["civic"] * 4 + ["focus"], "year": [2018.0] * 5,
+        "dealer_name": ["Hertz", " hertz", "Bob's", "", "Bob's"], "listing_id": list("abcde"),
+    })
+    price = pd.Series([10000.0, 12000.0, 20000.0, 30000.0, 9000.0])
+    d = _dealer_keys(df)
+    X = _cohort_features(df, d, _cohort_ref(df, d, price))
+    # Hertz cars see only Bob's and the no-name car; the others see the other three
+    assert list(X.cohort_median_price[:4]) == [25000.0, 25000.0, 12000.0, 12000.0]
+    assert list(X.cohort_count) == [2.0, 2.0, 3.0, 3.0, 0.0]
+    assert np.isnan(X.cohort_median_price[4])  # only its own dealer has this cohort
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
     test_deal_score_scales_with_segment_error()
     test_segment_errors()
+    test_cohort_features_exclude_own_dealer()
     print("ok")

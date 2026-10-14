@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from loguru import logger
 
-from sklearn.model_selection import train_test_split, KFold, GridSearchCV, GroupShuffleSplit
+from sklearn.model_selection import train_test_split, GridSearchCV, GroupShuffleSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor, VotingRegressor
@@ -251,20 +251,6 @@ def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _compute_cohort_stats(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
-    """
-    Compute median price and listing count per (make, model, year) cohort
-    from training data only. Used to build market-relative features without
-    any external API calls.
-    """
-    src = X[["make", "model", "year"]].copy()
-    src["_price"] = y.to_numpy()
-    return (
-        src.groupby(["make", "model", "year"])["_price"]
-        .agg(cohort_median="median", cohort_count="count")
-    )
-
-
 def _apply_cohort_features(X: pd.DataFrame, cohort_stats: pd.DataFrame) -> pd.DataFrame:
     """
     Join cohort median price and count onto X by (make, model, year).
@@ -277,35 +263,38 @@ def _apply_cohort_features(X: pd.DataFrame, cohort_stats: pd.DataFrame) -> pd.Da
     return X
 
 
-def _kfold_cohort_encode(X: pd.DataFrame, y: pd.Series, n_splits: int = 5) -> pd.DataFrame:
-    """
-    Compute cohort_median_price and cohort_count for each training row using
-    k-fold target encoding to prevent leakage.
+def _dealer_keys(df: pd.DataFrame) -> pd.Series:
+    """Normalised dealer name; a listing with none counts as its own dealer."""
+    d = df.get("dealer_name", pd.Series("", index=df.index)).fillna("").astype(str).str.lower().str.strip()
+    return d.where(d != "", "listing:" + df["listing_id"].astype(str))
 
-    For each row, the cohort median is computed from the other k-1 folds —
-    so no row ever sees its own price when its cohort feature is computed.
 
-    The full (non-fold) cohort stats used at inference time come from SQL —
-    ListingRepository.get_cohort_stats.
+def _cohort_ref(X: pd.DataFrame, dealers: pd.Series, y: pd.Series) -> pd.DataFrame:
+    """The training rows cohort features are computed from."""
+    return pd.DataFrame({
+        "make": X["make"].to_numpy(), "model": X["model"].to_numpy(), "year": X["year"].to_numpy(),
+        "dealer": dealers.to_numpy(), "price": y.to_numpy(),
+    })
+
+
+def _cohort_features(X: pd.DataFrame, dealers: pd.Series, ref: pd.DataFrame) -> pd.DataFrame:
     """
+    cohort_median_price and cohort_count per (make, model, year) from the ref
+    rows of *other dealers*. A fleet seller's own cars would otherwise set
+    the "market" its listings are judged against, so its markup always looks
+    fair. Also keeps a training row's own price out of its features (it shares
+    its own dealer key), which is what the old k-fold encoding was for.
+    """
+    q = pd.DataFrame({
+        "make": X["make"].to_numpy(), "model": X["model"].to_numpy(), "year": X["year"].to_numpy(),
+        "dealer": dealers.to_numpy(), "_row": np.arange(len(X)),
+    })
+    m = q.merge(ref, on=["make", "model", "year"], suffixes=("", "_ref"))
+    stats = m[m["dealer"] != m["dealer_ref"]].groupby("_row")["price"].agg(["median", "count"])
+    rows = np.arange(len(X))
     X = X.copy()
-    cohort_median = np.full(len(X), np.nan)
-    cohort_count  = np.zeros(len(X))
-
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-
-    for train_idx, val_idx in kf.split(X):
-        fold_stats = _compute_cohort_stats(X.iloc[train_idx], y.iloc[train_idx])
-        keys = pd.MultiIndex.from_arrays([
-            X.iloc[val_idx]["make"],
-            X.iloc[val_idx]["model"],
-            X.iloc[val_idx]["year"],
-        ])
-        cohort_median[val_idx] = fold_stats["cohort_median"].reindex(keys).to_numpy()
-        cohort_count[val_idx]  = fold_stats["cohort_count"].reindex(keys).fillna(0).to_numpy()
-
-    X["cohort_median_price"] = cohort_median
-    X["cohort_count"]        = cohort_count.astype(float)
+    X["cohort_median_price"] = stats["median"].reindex(rows).to_numpy()
+    X["cohort_count"] = stats["count"].reindex(rows).fillna(0).to_numpy().astype(float)
     return X
 
 
@@ -356,12 +345,15 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     X_train, X_val, X_test = X_raw.iloc[tr], X_raw.iloc[va], X_raw.iloc[te]
     y_train, y_val, y_test = y.iloc[tr], y.iloc[va], y.iloc[te]
 
-    # Full cohort stats (SQL, training split only) are saved for inference;
-    # training rows get k-fold out-of-fold encoding — no leakage.
+    # Cohort features come from training-split rows of other dealers (see
+    # _cohort_features). The all-dealer SQL stats serve /api/predict, whose
+    # car has no dealer.
     full_cohort_stats = repo.get_cohort_stats(df["id"].iloc[tr])
-    X_train = _kfold_cohort_encode(X_train, y_train)
-    X_val = _apply_cohort_features(X_val, full_cohort_stats)
-    X_test = _apply_cohort_features(X_test, full_cohort_stats)
+    dealers = _dealer_keys(df)
+    cohort_ref = _cohort_ref(X_train, dealers.iloc[tr], y_train)
+    X_train = _cohort_features(X_train, dealers.iloc[tr], cohort_ref)
+    X_val = _cohort_features(X_val, dealers.iloc[va], cohort_ref)
+    X_test = _cohort_features(X_test, dealers.iloc[te], cohort_ref)
 
     # log-space targets (this is what we train on)
     y_train_log = np.log1p(y_train)
@@ -671,6 +663,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         "metrics": metrics,
         "log_calibration": log_calibration,
         "cohort_stats": full_cohort_stats,
+        "cohort_ref": cohort_ref,
         "segment_errors": segment_errors,
     }
 
@@ -828,9 +821,10 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
 
     logger.info(f"Scoring {len(df)} listings…")
     X = _build_features_raw(df)
-    cohort_stats = payload.get("cohort_stats")
-    if cohort_stats is not None:
-        X = _apply_cohort_features(X, cohort_stats)
+    if payload.get("cohort_ref") is not None:
+        X = _cohort_features(X, _dealer_keys(df), payload["cohort_ref"])
+    elif payload.get("cohort_stats") is not None:  # models trained before cohort_ref
+        X = _apply_cohort_features(X, payload["cohort_stats"])
     log_calibration = payload.get("log_calibration", 0.0)
     preds = np.expm1(model.predict(X) - log_calibration)
     segment_errors = payload.get("segment_errors")
