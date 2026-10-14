@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime
 from loguru import logger
 
-from sklearn.model_selection import train_test_split, GridSearchCV, GroupShuffleSplit
+from sklearn.model_selection import train_test_split, GridSearchCV, GroupShuffleSplit, GroupKFold
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor, VotingRegressor
@@ -623,6 +623,20 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         f"(≈ {abs(np.expm1(-abs(log_calibration)) * 100):.1f}% systematic {direction}prediction corrected)"
     )
 
+    # Out-of-fold predictions for the training-split cars. The final model
+    # fits them closely, so scoring them with it hides their deals (4+ stars
+    # 4.4% vs 7.5% for unseen cars). Each is scored instead by one of 5
+    # models trained without its VIN, with cohort features from those folds.
+    groups_tr = _vin_groups(df.iloc[tr]).to_numpy()
+    X_train_raw, dealers_tr = X_raw.iloc[tr], dealers.iloc[tr]
+    oof_log = np.empty(len(tr))
+    for f_tr, f_ho in GroupKFold(n_splits=5).split(X_train_raw, groups=groups_tr):
+        ref = _cohort_ref(X_train_raw.iloc[f_tr], dealers_tr.iloc[f_tr], y_train.iloc[f_tr])
+        fold_pipe = clone(pipe).fit(
+            _cohort_features(X_train_raw.iloc[f_tr], dealers_tr.iloc[f_tr], ref), y_train_log.iloc[f_tr])
+        oof_log[f_ho] = fold_pipe.predict(_cohort_features(X_train_raw.iloc[f_ho], dealers_tr.iloc[f_ho], ref))
+    oof_predictions = dict(zip(groups_tr, np.expm1(oof_log - log_calibration)))
+
     # Typical error per price segment, on val with calibration applied — the
     # deal score's yardstick (see _deal_score_from_prices).
     segment_errors = _segment_errors(y_val.to_numpy(), np.expm1(val_logs[best_name] - log_calibration))
@@ -664,6 +678,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         "log_calibration": log_calibration,
         "cohort_stats": full_cohort_stats,
         "cohort_ref": cohort_ref,
+        "oof_predictions": oof_predictions,
         "segment_errors": segment_errors,
     }
 
@@ -827,6 +842,10 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
         X = _apply_cohort_features(X, payload["cohort_stats"])
     log_calibration = payload.get("log_calibration", 0.0)
     preds = np.expm1(model.predict(X) - log_calibration)
+    # Cars the model trained on get their out-of-fold prediction (see train)
+    oof = _vin_groups(df).map(payload.get("oof_predictions") or {}).to_numpy(dtype=float)
+    preds = np.where(np.isnan(oof), preds, oof)
+    logger.info(f"{int((~np.isnan(oof)).sum())} training-split listings use out-of-fold predictions")
     segment_errors = payload.get("segment_errors")
     if segment_errors is None:
         logger.warning("Model has no per-segment errors; scoring on the default scale (retrain to fix)")
