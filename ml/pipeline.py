@@ -629,19 +629,26 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     # models trained without its VIN, with cohort features from those folds.
     groups_tr = _vin_groups(df.iloc[tr]).to_numpy()
     X_train_raw, dealers_tr = X_raw.iloc[tr], dealers.iloc[tr]
-    oof_log = np.empty(len(tr))
+    oof_log, oof_count = np.empty(len(tr)), np.empty(len(tr))
     for f_tr, f_ho in GroupKFold(n_splits=5).split(X_train_raw, groups=groups_tr):
         ref = _cohort_ref(X_train_raw.iloc[f_tr], dealers_tr.iloc[f_tr], y_train.iloc[f_tr])
         fold_pipe = clone(pipe).fit(
             _cohort_features(X_train_raw.iloc[f_tr], dealers_tr.iloc[f_tr], ref), y_train_log.iloc[f_tr])
-        oof_log[f_ho] = fold_pipe.predict(_cohort_features(X_train_raw.iloc[f_ho], dealers_tr.iloc[f_ho], ref))
+        X_ho = _cohort_features(X_train_raw.iloc[f_ho], dealers_tr.iloc[f_ho], ref)
+        oof_log[f_ho], oof_count[f_ho] = fold_pipe.predict(X_ho), X_ho["cohort_count"]
     oof_predictions = dict(zip(groups_tr, np.expm1(oof_log - log_calibration)))
 
-    # Typical error per price segment, on val with calibration applied — the
-    # deal score's yardstick (see _deal_score_from_prices).
-    segment_errors = _segment_errors(y_val.to_numpy(), np.expm1(val_logs[best_name] - log_calibration))
-    logger.info("Segment median abs % error (val): " + " | ".join(
-        f"${lo:,.0f}-{'' if hi == float('inf') else f'${hi:,.0f}'}: {err:.1f}%" for lo, hi, err in segment_errors))
+    # Typical error per price segment and cohort size — the deal score's
+    # yardstick (see _deal_score_from_prices). Pools val with the training
+    # cars' out-of-fold errors (~7.4k rows) so the cells aren't noisy.
+    segment_errors = _segment_errors(
+        np.concatenate([y_val.to_numpy(), y_train.to_numpy()]),
+        np.expm1(np.concatenate([val_logs[best_name], oof_log]) - log_calibration),
+        np.concatenate([X_val["cohort_count"].to_numpy(), oof_count]),
+    )
+    logger.info("Segment median abs % error (val + OOF), by cohort size: " + " | ".join(
+        f"${lo:,.0f}-{'' if hi == float('inf') else f'${hi:,.0f}'}: {err:.1f}% ("
+        + "/".join(f"{c:.1f}" for _, _, c in cells) + ")" for lo, hi, err, cells in segment_errors))
 
     # -----------------------------
     # 7) Permutation importance on RAW features (24 cols), validation split
@@ -754,21 +761,42 @@ FIVE_STAR_MULTIPLE = 3.0
 DEFAULT_SEGMENT_ERROR_PCT = 32.0 / FIVE_STAR_MULTIPLE
 
 
-def _segment_errors(y_true: np.ndarray, y_pred: np.ndarray, min_n: int = 30) -> list[tuple]:
+# cohort_count bins for the yardstick. Rare cars are predicted far less
+# reliably: with one error per price band, held-out cars from cohorts under
+# 3 got 4+ stars 14.9% of the time vs 2.0% for cohorts of 30+.
+COHORT_BINS = [(0, 3), (3, 10), (10, float("inf"))]
+
+
+def _segment_errors(y_true: np.ndarray, y_pred: np.ndarray, cohort_count: np.ndarray | None = None,
+                    min_n: int = 30) -> list[tuple]:
     """(lo, hi, median abs % error) per PRICE_SEGMENTS bucket, by true price.
-    Buckets with fewer than min_n rows fall back to the overall median."""
+    Buckets with fewer than min_n rows fall back to the overall median.
+    Given cohort_count, each bucket also gets a 4th item: (lo, hi, error)
+    per COHORT_BINS cell, falling back to the bucket's error under min_n."""
     ape = np.abs(y_pred - y_true) / y_true * 100
     overall = float(np.median(ape))
     out = []
     for lo, hi in PRICE_SEGMENTS:
         m = (y_true >= lo) & (y_true < hi)
-        out.append((lo, hi, float(np.median(ape[m])) if m.sum() >= min_n else overall))
+        err = float(np.median(ape[m])) if m.sum() >= min_n else overall
+        if cohort_count is None:
+            out.append((lo, hi, err))
+            continue
+        cells = []
+        for clo, chi in COHORT_BINS:
+            c = m & (cohort_count >= clo) & (cohort_count < chi)
+            cells.append((clo, chi, float(np.median(ape[c])) if c.sum() >= min_n else err))
+        out.append((lo, hi, err, cells))
     return out
 
 
-def _segment_error_for(price: float, segment_errors: list[tuple] | None) -> float:
-    for lo, hi, err in segment_errors or ():
+def _segment_error_for(price: float, segment_errors: list[tuple] | None,
+                       cohort_count: float | None = None) -> float:
+    for lo, hi, err, *cells in segment_errors or ():
         if lo <= price < hi:
+            for clo, chi, cell_err in (cells[0] if cells and cohort_count is not None else ()):
+                if clo <= cohort_count < chi:
+                    return cell_err
             return err
     return DEFAULT_SEGMENT_ERROR_PCT
 
@@ -850,6 +878,8 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
     if segment_errors is None:
         logger.warning("Model has no per-segment errors; scoring on the default scale (retrain to fix)")
 
+    counts = X["cohort_count"].to_numpy() if "cohort_count" in X else None
+
     # Keep alignment with df rows
     df = df.reset_index(drop=True)
 
@@ -864,7 +894,8 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
 
         score = _deal_score_from_prices(
             actual=actual, predicted=predicted,
-            segment_error_pct=_segment_error_for(actual, segment_errors),
+            segment_error_pct=_segment_error_for(
+                actual, segment_errors, None if counts is None else float(counts[i])),
         )
         score = round(score, 1)
 

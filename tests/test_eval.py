@@ -67,6 +67,15 @@ def test_segment_errors():
     assert abs(_segment_error_for(80000, errs) - overall) < 1e-6   # only 3 rows: falls back
     assert abs(_segment_error_for(25000, None) - 32 / 3) < 1e-9     # old payloads
 
+    # by cohort size: 30 rare $5k cars at 40% error, 30 common ones at 10%
+    true = np.array([5000.0] * 60)
+    pred = true * np.array([1.4] * 30 + [1.1] * 30)
+    errs = _segment_errors(true, pred, np.array([1.0] * 30 + [50.0] * 30))
+    assert abs(_segment_error_for(5000, errs, 0) - 40) < 1e-6
+    assert abs(_segment_error_for(5000, errs, 12) - 10) < 1e-6
+    assert abs(_segment_error_for(5000, errs, 5) - 25) < 1e-6      # empty cell: band error
+    assert abs(_segment_error_for(5000, errs) - 25) < 1e-6         # no count given
+
 
 def test_cohort_features_exclude_own_dealer():
     df = pd.DataFrame({
