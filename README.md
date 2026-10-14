@@ -94,15 +94,17 @@ flowchart LR
 
 ## Deal Scoring
 
-Each listing's asking price is compared to the model's predicted fair value, and the gap is measured in units of **how wrong the model typically is at that price** (`ml/pipeline.py:742-790`). Only listings priced at or above `MIN_PRICE` ($3,000, `db/models.py:80`) are scored and shown: the model is trained on nothing cheaper.
+Each listing's asking price is compared to the model's predicted fair value, and the gap is measured in units of **how wrong the model typically is at that price** (`_segment_errors` and `_deal_score_from_prices` in `ml/pipeline.py`). Only listings priced at or above `MIN_PRICE` ($3,000, `db/models.py:80`) are scored and shown: the model is trained on nothing cheaper.
 
 ```
 diff_pct = (predicted_price - actual_price) / predicted_price * 100
-z        = diff_pct / segment_error      # segment_error: median abs % error in this price band
+z        = diff_pct / segment_error      # segment_error: median abs % error for this price band and cohort size
 score    = clamp(50 + 40 * z / 3, 0, 100)
 ```
 
-`segment_error` is the selected model's median absolute % error on the **validation** split, per price band (under $10k, $10-20k, $20-35k, $35-60k, over $60k, by asking price). It is saved with the model at every retrain. On the current snapshot it runs from about 7% ($20-35k) to 20% (under $10k).
+`segment_error` is the selected model's median absolute % error per price band (under $10k, $10-20k, $20-35k, $35-60k, over $60k, by asking price) and, within each band, per cohort size: how many other-dealer training cars share the listing's make, model and year (under 3, 3-9, 10+). A cell with under 30 rows falls back to its band's error. The errors come from the validation split plus the training cars' out-of-fold predictions, and are saved with the model at every retrain. On the current snapshot band errors run from about 7% ($20-35k) to 20% (under $10k). Rare cars get a wider yardstick because the model is much less sure about them; with one error per band they got 4+ stars about 3x as often as common cars.
+
+Cars the model trained on are scored with an **out-of-fold** prediction: one of 5 models trained without that VIN. Scored with the final model, which fits them closely, they hardly ever looked like deals.
 
 5 Stars needs a discount of at least **3x the band's typical error**. For roughly normal errors the median absolute error is about 0.67 sigma, so 3x is about 2 sigma: fewer than 1 in 40 fairly priced cars should look that cheap from model error alone. The same 20% discount is therefore 5 Stars on a $25k car (typical error ~7%) but only 3 Stars on an $8k car (~20%). Cheap cars stay listed and graded; they just need a much bigger discount before the grade claims a steal. On the current snapshot this cut 5-Star listings from 210 (73% under $10k) to 119 (2 under $10k).
 

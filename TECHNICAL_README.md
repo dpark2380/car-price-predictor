@@ -161,9 +161,10 @@ The theory shows XGBoost operating directly on a feature matrix. Our implementat
 
 This means $x_i$ in $b(x_i, \gamma_m)$ is the transformed, imputed, one-hot-encoded vector — not a raw scraped row.
 
-**K-Fold Cohort Encoding** is a custom addition beyond the theory. The `cohort_median_price` feature tells the model "what do similar cars (same make/model/year) typically sell for?" Naively computing this from all training data would let each row partially see its own price — target leakage. We solve this with 5-fold target encoding:
-- For each training row, compute cohort median from the **other 4 folds only**
-- At inference, use full training cohort stats (no leakage concern)
+**Dealer-Excluded Cohort Features** are a custom addition beyond the theory. The `cohort_median_price` feature tells the model "what do similar cars (same make/model/year) typically sell for?" It is computed only from training-split cars sold by **other dealers**:
+- A training row shares its own dealer key, so its own price never enters its feature (no target leakage)
+- A large seller's own cars can't set the "market" its listings are judged against
+- At inference, the same rule applies against the saved training rows (`cohort_ref` in the payload)
 
 **Post-Training Calibration** is also not in the theory:
 
@@ -509,13 +510,13 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 ---
 
-### 14.3 K-Fold Cohort Encoding to Prevent Target Leakage
+### 14.3 Dealer-Excluded Cohort Features
 
-**Change:** The `cohort_median_price` feature is computed using 5-fold target encoding during training rather than naively from the full training set.
+**Change:** `cohort_median_price` and `cohort_count` are computed from training-split cars sold by other dealers (a listing with no dealer name counts as its own dealer). This replaced 5-fold target encoding on 2026-10-14.
 
-**Why:** Naive computation lets each row partially see its own price when its cohort feature is calculated — target leakage. For each training row, the cohort median is computed from the other 4 folds only. At inference, the full training cohort stats are used (no leakage concern).
+**Why:** Naive computation lets each row partially see its own price (target leakage); excluding the row's dealer excludes the row too. It also stops a fleet seller (Hertz San Diego is ~1,500 pooled rows) from setting the market median its own listings are scored against, which made its markup look fair by construction. Test MAE moved within seed noise.
 
-**File:** `ml/pipeline.py` — `_kfold_cohort_encode()` (out-of-fold, pandas); the full inference stats are computed in SQL by `db/repository.py` — `ListingRepository.get_cohort_stats()`. Training rows come pre-filtered from the `training_listings_v` view (`db/models.py`).
+**File:** `ml/pipeline.py` — `_dealer_keys()`, `_cohort_ref()`, `_cohort_features()`. `/api/predict` (a car with no dealer) still uses all-dealer stats computed in SQL by `ListingRepository.get_cohort_stats()` in `db/repository.py`. Training rows come pre-filtered from the `training_listings_v` view (`db/models.py`).
 
 ---
 
@@ -597,6 +598,24 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 The cap finds the minimum additional regularisation beyond lambda_min that produces a stable, sparse OLS refit — no assumptions about the shape of the CV error curve required.
 
 **File:** `ml/pipeline.py` — `RelaxedLasso(max_features=150)`
+
+---
+
+### 14.9 Seed-Averaged XGB
+
+**Change:** The xgb candidate averages 5 XGBRegressors that differ only in `random_state` (`VotingRegressor`). Grid search and early stopping stay single-seed.
+
+**Why:** `subsample` and `colsample_bytree` make each seed's trees differ; averaging cuts variance at ~6k training rows. Test MAE -$33 on the 2026-10-13 data, -$48 averaged over three VIN splits in `model_improvement_research.md`.
+
+---
+
+### 14.10 Out-of-Fold Scoring and a Cohort-Aware Yardstick
+
+**Change:** Training also fits 5 VIN-grouped fold models and stores each training car's out-of-fold prediction; scoring uses it for any listing of that car. The deal score's typical error is now per price band *and* cohort-size bin (<3, 3-9, 10+), estimated from validation plus out-of-fold errors.
+
+**Why:** Scored by the final model, training cars got 4+ stars 4.4% of the time against 7.5% for unseen cars: the model had fit their prices. And with one error per band, rare cars (cohorts under 3) got 4+ stars 14.8% of the time against 4.3% for cohorts of 10+. After both changes: 10.8% vs 10.3%, and 7.8% / 10.2% / 8.5% by cohort size. Test MAE is unchanged; these fix who gets flagged.
+
+**File:** `ml/pipeline.py` — `train()` (out-of-fold loop, `oof_predictions`), `_segment_errors()`, `_segment_error_for()`, `score_listings()`.
 
 ---
 
