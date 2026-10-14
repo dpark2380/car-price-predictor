@@ -8,7 +8,7 @@ from loguru import logger
 from sklearn.model_selection import train_test_split, KFold, GridSearchCV, GroupShuffleSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, VotingRegressor
 from sklearn.inspection import permutation_importance
 from sklearn.base import BaseEstimator, RegressorMixin, clone
 
@@ -488,11 +488,14 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         f"(ceiling=3000, grid search suggested {best_params['model__n_estimators']})"
     )
 
-    candidates["xgb"] = XGBRegressor(
-        n_estimators=optimal_n,
-        learning_rate=best_params["model__learning_rate"],
-        **xgb_fixed_params,
-    )
+    # Average 5 seeds (subsample/colsample make them differ): cuts variance at
+    # ~6k rows. Measured -$48 test MAE over 3 VIN splits, better on each.
+    xgb_lr = best_params["model__learning_rate"]
+    candidates["xgb"] = VotingRegressor([
+        (f"seed{s}", XGBRegressor(n_estimators=optimal_n, learning_rate=xgb_lr,
+                                  **{**xgb_fixed_params, "random_state": s}))
+        for s in range(42, 47)
+    ])
 
     def _eval(y_true_np: np.ndarray, y_pred_np: np.ndarray) -> tuple[float, float]:
         mae = float(mean_absolute_error(y_true_np, y_pred_np))
@@ -697,9 +700,6 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     logger.info(f"Train/Val/Test split (VIN-grouped): {len(X_train)}/{len(X_val)}/{len(X_test)}")
     logger.info("="*72 + "\n")
 
-    xgb_lr = candidates["xgb"].learning_rate
-    xgb_n  = candidates["xgb"].n_estimators
-
     return {
         "version":        version,
         "selected_model": best_name,
@@ -709,7 +709,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         "val_rows":       int(len(X_val)),
         "test_rows":      int(len(X_test)),
         "xgb_lr":         xgb_lr,
-        "xgb_n_estimators": xgb_n,
+        "xgb_n_estimators": optimal_n,
         # for scripts/holdout_audit.py: positional split indices into df and
         # calibrated test predictions per candidate
         "split":          {"train": tr, "val": va, "test": te},
