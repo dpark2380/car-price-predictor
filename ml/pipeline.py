@@ -419,7 +419,9 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         reg_lambda=1.0,
         random_state=42,
         verbosity=0,
-        objective="reg:absoluteerror",
+        # Squared error on the log target. Absolute error was $436 worse on
+        # test MAE (2026-10-14), and worse in every price and luxury slice.
+        objective="reg:squarederror",
     )
 
     # Joint grid search over M (n_estimators) and eta (learning_rate).
