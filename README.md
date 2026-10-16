@@ -8,22 +8,22 @@ A used car market intelligence pipeline that ingests live listings from the Mark
 
 Four model families are trained on the same features and the same split: **Linear Regression**, a custom **Relaxed Lasso** (LassoCV variable selection, then an unregularized OLS refit on the selected variables), **Random Forest**, and **XGBoost**.
 
-**Evaluation setup** (`ml/pipeline.py:318-332`, `db/models.py:93`):
+**Evaluation setup** (`_vin_split` and `train` in `ml/pipeline.py`, `training_pool_v` in `db/models.py`):
 - Rows come from the `training_pool_v` SQL view: price $3k-100k, mileage 0-400k, `days_listed` <= 365, last seen within 180 days, and **one row per VIN** (the latest snapshot). Dealers relist the same car under a new listing id, usually after a price cut, so without this the test set contains near-identical twins of training cars.
 - Train/validation/test split **grouped by VIN** (`GroupShuffleSplit`, seed 42): test is 20% of cars, validation is 20% of the rest (64/16/20). No VIN appears in more than one split; the audit script asserts this and records the overlap counts (all 0).
-- The **test split is used once, for reporting.** The model is selected on validation MAE (`ml/pipeline.py:607`), and the bias-correction offset (`log_calibration`, median log residual) is fit on validation (`ml/pipeline.py:622`).
+- The **test split is used once, for reporting.** The model is selected on validation MAE, and the bias-correction offset (`log_calibration`, median log residual) is fit on validation.
 - Target: `log1p(price)`, converted back with `expm1` minus the calibration offset, as production serves it.
 
-**Held-out test results**, from [`outputs/holdout_metrics.json`](outputs/holdout_metrics.json), produced by `scripts/holdout_audit.py` (9,688 unique cars as of 2026-09-27; 6,200 train, 1,550 val, 1,938 test). Median abs % error is `median(|pred - true| / true)`. Price segments filter on the **true** asking price.
+**Held-out test results**, from [`outputs/holdout_metrics.json`](outputs/holdout_metrics.json), produced by `scripts/holdout_audit.py` (9,605 unique cars as of 2026-10-15; 6,147 train, 1,537 val, 1,921 test). Median abs % error is `median(|pred - true| / true)`. Price segments filter on the **true** asking price.
 
-| Model | Val MAE | Test MAE | Median abs % error | $20-35k (n=652) | < $10k (n=254) |
+| Model | Val MAE | Test MAE | Median abs % error | $20-35k (n=622) | < $10k (n=222) |
 |---|---|---|---|---|---|
-| Linear | $5,024 | $5,346 | 14.1% | 11.0% | 28.1% |
-| Relaxed Lasso | $4,395 | $4,798 | 12.5% | 9.2% | 19.3% |
-| Random Forest | $3,797 | $3,821 | 9.1% (95% CI 8.6-9.7) | 5.4% (4.8-6.5) | 19.0% |
-| **XGBoost (selected)** | **$3,594** | **$3,658** | **9.0% (95% CI 8.4-9.6)** | **6.3% (5.5-7.0)** | **17.3%** |
+| Linear | $5,763 | $5,528 | 15.1% | 13.3% | 29.1% |
+| Relaxed Lasso | $5,157 | $5,069 | 13.8% | 11.2% | 22.3% |
+| Random Forest | $3,958 | $3,968 | 9.6% (95% CI 8.9-10.4) | 8.0% (7.0-9.2) | 20.1% |
+| **XGBoost (selected)** | **$3,413** | **$3,363** | **8.2% (95% CI 7.6-8.7)** | **6.8% (6.2-7.5)** | **13.2%** |
 
-CIs are percentile bootstraps over the test set (2,000 resamples). XGBoost is selected because it has the lowest validation MAE. It also has the lowest overall test median error, but its margin over Random Forest is not significant: the paired bootstrap CI for the difference is -0.7 to +0.4 points overall. In the $20-35k segment Random Forest is better (5.4% vs 6.3%), a difference whose CI (-0.1 to +1.5 points) just includes zero.
+CIs are percentile bootstraps over the test set (2,000 resamples). XGBoost is selected because it has the lowest validation MAE, and it also has the lowest test error in every segment but over $60k. Its margin over Random Forest is significant: the paired bootstrap CI for the difference in median error is -2.2 to -0.8 points overall and -2.2 to -0.2 points in the $20-35k segment. XGBoost averages 5 seeds and uses squared error on the log price (see `TECHNICAL_README.md` 14.2 and 14.9).
 
 Caveats:
 - The target is the dealer's **asking** price, not a sale price, so "error" means distance from the asking price.
