@@ -83,7 +83,9 @@ The pipeline, API and dashboard run unattended on an always-on Mac mini as three
 | API | `com.carintel.api` | `api.py` under gunicorn on port 5001, restarted if it exits |
 | Dashboard | `com.carintel.web` | the built React app on port 3000 |
 
-A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. Logs, the database and the model stay on the machine and are not committed.
+A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. The database, model and live logs stay on the machine and are not committed.
+
+[`outputs/run_history/`](outputs/run_history/) is a snapshot of those three CSVs as of 2026-10-16: every scheduled run since April 2026. Timestamps are UTC. Training rows before 2026-09-29 show lower MAE because they used the retracted random, non-VIN-grouped split (see Results), and runs before 2026-10-14 used the earlier model configuration.
 
 ---
 
