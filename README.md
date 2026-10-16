@@ -50,7 +50,7 @@ A full rescoring pass over 14,737 listings takes 0.2 s. Writing the scores to SQ
 ```mermaid
 flowchart LR
     MC[Marketcheck API] -->|scraper/data_ingest.py| DB[(SQLite car_intel.db)]
-    LD[launchd job, ~36h interval] -->|scheduler/runner.py| SCR
+    LD[launchd daemon on a Mac mini, every 36h] -->|scheduler/runner.py| SCR
     SCR[scrape_job] --> DB
     SCR --> TRAIN[ml_train_job]
     TRAIN -->|ml/pipeline.py train| MODEL[(models/price_predictor.joblib)]
@@ -65,13 +65,25 @@ flowchart LR
 
 **Storage** (`db/models.py`, `db/repository.py`) is a SQLite database via SQLAlchemy with three tables: `car_listings`, `predictions`, and `popularity_snapshots`. Listings are upserted by `listing_id`; stale listings are marked inactive rather than deleted.
 
-**Scheduled retrain and rescore** (`scheduler/runner.py`) orchestrates scrape, train, score, and popularity-snapshot jobs in sequence (`run_all`). In production this is triggered by a macOS launchd job that lives outside this repo (see Setup below for the equivalent cron line).
+**Scheduled retrain and rescore** (`scheduler/runner.py`) runs the scrape, train, score, and popularity-snapshot jobs in sequence, then exits. In production a launchd daemon starts it every 36 hours (see Running in production below).
 
 **Modeling** (`ml/pipeline.py`) builds engineered features (vehicle age, mileage transforms, cohort medians, luxury/body-type flags, one-hot categoricals), trains and compares the four model families above, and persists the winner with its metrics and calibration offset.
 
 **API** (`api.py`) is a Flask app that reads from SQLite and the saved model to serve deals, stats, trends, and on-demand predictions.
 
 **Dashboard** (`frontend/src/car-intel-dashboard.jsx`) is a React app (Recharts for charts) that calls the Flask API, configured via `REACT_APP_API_URL` (defaults to `http://localhost:5001/api`).
+
+### Running in production
+
+The pipeline, API and dashboard run unattended on an always-on Mac mini as three macOS LaunchDaemons, so they start at boot without anyone logging in. The plists, setup and install scripts are in [`deploy/macmini/`](deploy/macmini/README.md).
+
+| Service | launchd label | What it runs |
+|---|---|---|
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and every 129,600 s (36 h): scrape → data validation → train → score → popularity snapshot |
+| API | `com.carintel.api` | `api.py` under gunicorn on port 5001, restarted if it exits |
+| Dashboard | `com.carintel.web` | the built React app on port 3000 |
+
+A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. Logs, the database and the model stay on the machine and are not committed.
 
 ---
 
@@ -153,7 +165,7 @@ npm start
 
 ### Scheduling
 
-In production, retraining is triggered by a macOS launchd job that is **not part of this repo** (`~/Library/LaunchAgents/com.danielpark.carpricepredictor.plist`), running `scheduler/runner.py` on a `StartInterval` of 129600 seconds (36 hours). The job runs the repo's `venv/bin/python3`, so it needs the step-1 virtualenv to exist. Without it, launchd fails silently with exit code 78 (check with `launchctl print gui/$(id -u)/com.danielpark.carpricepredictor`). Cron cannot express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical cron equivalent is a daily run:
+On macOS, `deploy/macmini/setup.sh` and `install.sh` install the scheduled pipeline (see Running in production). Check a run with `launchctl print system/com.carintel.pipeline` (`runs`, `last exit code`) and `tail logs/launchd_stderr.log`. The job runs the repo's `venv/bin/python3`, so the virtualenv must exist; without it launchd fails with exit code 78. Elsewhere, cron can't express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical equivalent is a daily run:
 
 ```cron
 # crontab -e — daily approximation of the launchd job (not an exact 36h match)
@@ -164,10 +176,10 @@ In production, retraining is triggered by a macOS launchd job that is **not part
 
 ## Limitations and Next Steps
 
-- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split disjointness and the scoring price floor), not CI. `onnx_export_test/` and `scripts/test_marketcheck_endpoints.py` are standalone experiments and smoke scripts.
+- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split, scoring price floor, deal-score scaling, dealer-excluded cohort features), not CI. `scripts/test_marketcheck_endpoints.py` is a standalone smoke script.
 - The deal score is a simple linear heuristic on predicted-vs-actual price gap. It isn't calibrated against actual sale outcomes.
 - The model doesn't see vehicle condition or options data, since Marketcheck doesn't return either in structured form. This is the largest known gap versus production pricing tools.
-- Retraining depends on a single machine's launchd job; it won't run while that machine is asleep or off, and there's no alerting if a run silently fails.
+- Retraining depends on a single always-on machine (sleep disabled by `install.sh`); there's no failover if it's off, and no alerting if a run fails. The run log and `launchctl print` are the only signals.
 - The saved model is a single `models/price_predictor.joblib` file with no versioning or rollback if a bad training run gets deployed.
 - `requirements.txt` includes `gunicorn`, but neither `Procfile` nor `render.yaml` currently invoke it; both run the Flask dev server directly.
 
@@ -198,7 +210,11 @@ Car-Price-Predictor/
 ├── scripts/
 │   ├── model_sanity_check.py     # Directional/sanity checks on model predictions
 │   └── score_audit.py            # Deal score distribution report
-├── onnx_export_test/             # Standalone ONNX export experiment (not part of the app)
+├── deploy/macmini/               # LaunchDaemon plists + setup/install scripts for the always-on host
+├── outputs/
+│   └── holdout_metrics.json      # Held-out test results (scripts/holdout_audit.py)
+├── tests/
+│   └── test_eval.py              # Assert-based checks: split, price floor, deal score, cohorts
 ├── frontend/
 │   ├── .env.example              # Frontend environment variables (REACT_APP_API_URL)
 │   └── src/
