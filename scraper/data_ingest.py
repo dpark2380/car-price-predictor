@@ -380,7 +380,10 @@ class DataIngestor:
             rows_per_call=self.ROWS_PER_CALL,
             max_calls=self.CALLS_PER_TARGET,
             rotate_pages=True,
-            pages_in_rotation=16,
+            # Marketcheck rejects start >= 500 (422, and the call still
+            # counts). Calls go to start=0 plus 4 pages from the cursor, so
+            # cursor offsets 0-300 (7 pages) keep every start at or below 450.
+            pages_in_rotation=7,
             page_cursor_path=page_cursor_path,
             zip_cursor_path=zip_cursor_path,
             car_type="used",
