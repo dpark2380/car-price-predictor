@@ -24,16 +24,13 @@ LOGS_DIR = Path("logs")
 
 # See ListingRepository.mark_stale_inactive for why this is generous rather
 # than per-run: the scraper only re-confirms a rotating slice of inventory
-# each run, so "unseen for N days" needs headroom for that coverage cycle.
-#
-# Calibrated against this DB's actual last_seen distribution (2026-09-04):
-# a long gap in scraping means most rows haven't been re-confirmed in 90-165
-# days regardless of whether they're still for sale, so anything below ~165
-# would deactivate a large fraction of genuinely-active inventory on the
-# very next run. 180 is a deliberate no-op today (max observed gap is ~164
-# days) — it'll start catching real staleness only as fresh runs accumulate.
-# Safe to lower once last_seen ages reflect the now-working 36h cadence.
-INACTIVE_AFTER_DAYS = env_int("INACTIVE_AFTER_DAYS", 180)
+# each run (each zip comes round every ~15 days on the daily schedule), so
+# "unseen for N days" needs headroom for that coverage cycle. 60 days is about
+# four cycles; a listing typically stays up ~18 days. It was 180 while the
+# laptop schedule left months-long gaps; a deactivated listing that is seen
+# again is reactivated on upsert. Display only: training and scoring use
+# every listing seen in the last 180 days, active or not.
+INACTIVE_AFTER_DAYS = env_int("INACTIVE_AFTER_DAYS", 60)
 
 # ── Persistent run logging ────────────────────────────────────────────────────
 
