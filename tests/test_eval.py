@@ -7,12 +7,13 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator
 
 from db.models import init_db, get_session, CarListing, Prediction, MIN_PRICE
 from db.repository import ListingRepository, PredictionRepository
 from ml.pipeline import (_vin_split, _vin_groups, _deal_score_from_prices, _deal_label,
                          _segment_errors, _segment_error_for,
-                         _dealer_keys, _cohort_ref, _cohort_features)
+                         _dealer_keys, _cohort_ref, _cohort_features, PriceRouted)
 
 
 def test_vin_split_disjoint():
@@ -79,7 +80,7 @@ def test_segment_errors():
 
 def test_cohort_features_exclude_own_dealer():
     df = pd.DataFrame({
-        "make": ["honda"] * 4 + ["ford"], "model": ["civic"] * 4 + ["focus"], "year": [2018.0] * 5,
+        "make": ["honda"] * 4 + ["ford"], "model": ["civic"] * 4 + ["focus"], "year": [2018.0] * 5, "mileage": [50_000.0] * 5, "trim": [""] * 5,
         "dealer_name": ["Hertz", " hertz", "Bob's", "", "Bob's"], "listing_id": list("abcde"),
     })
     price = pd.Series([10000.0, 12000.0, 20000.0, 30000.0, 9000.0])
@@ -91,10 +92,42 @@ def test_cohort_features_exclude_own_dealer():
     assert np.isnan(X.cohort_median_price[4])  # only its own dealer has this cohort
 
 
+def test_comp_price_uses_nearest_other_dealer_cars():
+    df = pd.DataFrame({
+        "make": ["honda"] * 4, "model": ["civic"] * 4, "year": [2018.0, 2018.0, 2018.0, 2010.0],
+        "mileage": [50_000.0, 50_000.0, 50_000.0, 50_000.0], "trim": ["ex", "ex", "ex", "ex"],
+        "dealer_name": ["Hertz", "Hertz", "Bob's", "Al's"], "listing_id": list("abcd"),
+    })
+    price = pd.Series([99_000.0, 99_000.0, 20_000.0, 5_000.0])
+    d = _dealer_keys(df)
+    X = _cohort_features(df, d, _cohort_ref(df, d, price))
+    # Hertz cars never see Hertz prices; Bob's twin (dist 0) outweighs Al's 8-year-older car
+    w_bob, w_al = 1 / 0.5, 1 / 8.5
+    assert abs(X.comp_price[0] - (20_000 * w_bob + 5_000 * w_al) / (w_bob + w_al)) < 1e-6
+    assert X.comp_price[0] < 20_000
+    # a different trim weighs like 2 years: Bob's LX now sits between the EX cars
+    df["trim"] = ["ex", "ex", "lx", "ex"]
+    X = _cohort_features(df, d, _cohort_ref(df, d, price))
+    w_bob, w_al = 1 / 2.5, 1 / 8.5
+    assert abs(X.comp_price[0] - (20_000 * w_bob + 5_000 * w_al) / (w_bob + w_al)) < 1e-6
+
+
+def test_price_routed_picks_model_by_cheap_prediction():
+    class Const(BaseEstimator):
+        def __init__(self, v=0.0): self.v = v
+        def fit(self, X, y): return self
+        def predict(self, X): return np.where(np.asarray(X)[:, 0] > 0, self.v, np.log1p(5_000))
+    r = PriceRouted(cheap=Const(np.log1p(20_000)), rest=Const(np.log1p(30_000))).fit(np.zeros((2, 1)), [0, 0])
+    # row 0: cheap model says $5k -> keeps it; row 1: cheap says $20k -> rest's $30k
+    assert np.allclose(np.expm1(r.predict(np.array([[0.0], [1.0]]))), [5_000, 30_000])
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
     test_deal_score_scales_with_segment_error()
     test_segment_errors()
     test_cohort_features_exclude_own_dealer()
+    test_comp_price_uses_nearest_other_dealer_cars()
+    test_price_routed_picks_model_by_cheap_prediction()
     print("ok")
