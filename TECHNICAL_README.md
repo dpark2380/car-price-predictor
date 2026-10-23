@@ -166,6 +166,8 @@ This means $x_i$ in $b(x_i, \gamma_m)$ is the transformed, imputed, one-hot-enco
 - A large seller's own cars can't set the "market" its listings are judged against
 - At inference, the same rule applies against the saved training rows (`cohort_ref` in the payload)
 
+**Comparable-sales price** (`comp_price`) sits beside it: the inverse-distance-weighted price of the 8 nearest same make/model cars by year, mileage / 20k and trim (a different trim counts as 2 years apart), from other dealers only. Only the xgb model for cars predicted at $10k and up uses it (section 14.11).
+
 **Post-Training Calibration** is also not in the theory:
 
 ```python
@@ -616,6 +618,26 @@ The cap finds the minimum additional regularisation beyond lambda_min that produ
 **Why:** Scored by the final model, training cars got 4+ stars 4.4% of the time against 7.5% for unseen cars: the model had fit their prices. And with one error per band, rare cars (cohorts under 3) got 4+ stars 14.8% of the time against 4.3% for cohorts of 10+. After both changes: 10.8% vs 10.3%, and 7.8% / 10.2% / 8.5% by cohort size. Test MAE is unchanged; these fix who gets flagged.
 
 **File:** `ml/pipeline.py` — `train()` (out-of-fold loop, `oof_predictions`), `_segment_errors()`, `_segment_error_for()`, `score_listings()`.
+
+---
+
+### 14.11 Comparable-Sales Price, Routed by Predicted Price
+
+**Change:** New feature `comp_price` (see section 8). The xgb candidate is now `PriceRouted`: two tuned 5-seed XGB pipelines, one without `comp_price` and one with it. The one without predicts first; if it says under $10k, that answer stands, otherwise the `comp_price` model answers. `/api/predict` and `scripts/model_sanity_check.py` build features from `cohort_ref`, so they get `comp_price` too.
+
+**Why:** On the 2026-10-20 data (9,964 rows), `comp_price` alone cut test MAE by $140-180 on 3 VIN splits and 2 dealer-held-out splits, but made median % error under $10k worse on 4 of the 5 (by 1.0-2.6 points). Routing keeps the gain and leaves cheap cars no worse:
+
+| Split | MAE before → after | Median % error | Under $10k median % error |
+|---|---|---|---|
+| VIN 42 | $3,319 → $3,177 | 8.24 → 8.22 | 16.7 → 16.7 |
+| VIN 1 | $3,339 → $3,174 | 8.15 → 7.75 | 17.6 → 17.3 |
+| VIN 2 | $3,451 → $3,261 | 8.85 → 8.07 | 17.3 → 17.1 |
+| Dealer 0 | $3,409 → $3,236 | 8.08 → 7.08 | 11.8 → 11.7 |
+| Dealer 1 | $4,339 → $4,163 | 10.93 → 10.58 | 18.3 → 18.0 |
+
+Routing uses the model's predicted price, not the asking price: a listing's own price must not pick the model that judges it. Known cost: $35-60k median % error on dealer-held-out split 0 rose 8.8 → 10.7, and training runs XGB tuning twice.
+
+**File:** `ml/pipeline.py` — `PriceRouted`, `_comp_prices()`, `_cohort_features()`, `train()` (`_tuned_xgb`).
 
 ---
 

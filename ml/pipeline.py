@@ -137,6 +137,31 @@ class RelaxedLasso(BaseEstimator, RegressorMixin):
         return self.ols_.predict(X_dense[:, self.selected_mask_])
 
 
+class PriceRouted(BaseEstimator, RegressorMixin):
+    """
+    Two log-price models routed by the `cheap` model's own prediction: below
+    `cut` dollars it answers, otherwise `rest` does. `rest` uses comp_price,
+    which cut MAE $140-180 over 5 splits (3 VIN, 2 dealer-held-out) but made
+    median % error under $10k worse on 4 of them; routing kept the gain and
+    left cheap cars no worse (2026-10-21). Routing on the asking price instead
+    would let a listing's own price pick the model judging it.
+    """
+
+    def __init__(self, cheap=None, rest=None, cut: float = 10_000):
+        self.cheap = cheap
+        self.rest = rest
+        self.cut = cut
+
+    def fit(self, X, y):
+        self.cheap_ = clone(self.cheap).fit(X, y)
+        self.rest_ = clone(self.rest).fit(X, y)
+        return self
+
+    def predict(self, X):
+        cheap = self.cheap_.predict(X)
+        return np.where(cheap < np.log1p(self.cut), cheap, self.rest_.predict(X))
+
+
 MODEL_PATH = "models/price_predictor.joblib"
 MIN_TRAINING_SAMPLES = env_int("MIN_TRAINING_SAMPLES", 140)
 TRIM_RANKINGS_PATH = "config/trim_rankings.json"
@@ -273,6 +298,7 @@ def _cohort_ref(X: pd.DataFrame, dealers: pd.Series, y: pd.Series) -> pd.DataFra
     """The training rows cohort features are computed from."""
     return pd.DataFrame({
         "make": X["make"].to_numpy(), "model": X["model"].to_numpy(), "year": X["year"].to_numpy(),
+        "mileage": X["mileage"].to_numpy(), "trim": X["trim"].to_numpy(),
         "dealer": dealers.to_numpy(), "price": y.to_numpy(),
     })
 
@@ -295,7 +321,27 @@ def _cohort_features(X: pd.DataFrame, dealers: pd.Series, ref: pd.DataFrame) -> 
     X = X.copy()
     X["cohort_median_price"] = stats["median"].reindex(rows).to_numpy()
     X["cohort_count"] = stats["count"].reindex(rows).fillna(0).to_numpy().astype(float)
+    if "trim" in ref:  # models trained before comp_price have no trim/mileage in ref
+        q = q.assign(mileage=X["mileage"].to_numpy(), trim=X["trim"].to_numpy())
+        X["comp_price"] = _comp_prices(q, ref).reindex(rows).to_numpy()
     return X
+
+
+def _comp_prices(q: pd.DataFrame, ref: pd.DataFrame, k: int = 8) -> pd.Series:
+    """
+    Comparable-sales price per q row: inverse-distance-weighted price of the k
+    nearest same make/model ref cars by year, mileage / 20k and trim (a
+    different trim counts as 2 years apart), other dealers only (so never the
+    car itself or its lot-mates).
+    """
+    m = q.merge(ref, on=["make", "model"], suffixes=("", "_ref"))
+    m = m[m["dealer"] != m["dealer_ref"]]
+    m = m.assign(dist=np.sqrt((m["year"] - m["year_ref"]) ** 2
+                              + ((m["mileage"] - m["mileage_ref"]) / 20_000) ** 2
+                              + (2.0 * (m["trim"] != m["trim_ref"])) ** 2))
+    m = m.sort_values(["_row", "dist"]).groupby("_row").head(k)
+    w = 1 / (m["dist"].fillna(m["dist"].max()) + 0.5)
+    return (m["price"] * w).groupby(m["_row"]).sum() / w.groupby(m["_row"]).sum()
 
 
 def _vin_groups(df: pd.DataFrame) -> pd.Series:
@@ -368,7 +414,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         "is_luxury", "is_truck", "is_sports",
         "lux_age", "lux_mpy",
         "trim_rank",
-        "cohort_median_price", "cohort_count",
+        "cohort_median_price", "cohort_count", "comp_price",
     ]
     categorical_features = [
         "make", "model", "state",
@@ -385,13 +431,18 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         ("onehot", OneHotEncoder(handle_unknown="ignore")),
     ])
 
-    preprocess = ColumnTransformer(
-        transformers=[
-            ("num", numeric_transformer, numeric_features),
-            ("cat", categorical_transformer, categorical_features),
-        ],
-        remainder="drop",
-    )
+    def _preprocess(numeric: list[str]) -> ColumnTransformer:
+        return ColumnTransformer(
+            transformers=[
+                ("num", numeric_transformer, numeric),
+                ("cat", categorical_transformer, categorical_features),
+            ],
+            remainder="drop",
+        )
+
+    preprocess = _preprocess(numeric_features)
+    # The XGB model for cheap cars goes without comp_price (see PriceRouted)
+    preprocess_cheap = _preprocess([f for f in numeric_features if f != "comp_price"])
 
     # -----------------------------
     # 4) Candidates
@@ -424,72 +475,79 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         objective="reg:squarederror",
     )
 
-    # Joint grid search over M (n_estimators) and eta (learning_rate).
-    # These two are not independent: small eta needs many trees to converge,
-    # large eta converges faster but may overshoot. Searching them jointly
-    # finds the true optimum rather than two separate marginal optima.
-    base_xgb = XGBRegressor(**xgb_fixed_params)
-    gs_pipe = Pipeline(steps=[
-        ("preprocess", preprocess),
-        ("model", base_xgb),
-    ])
-    param_grid = {
-        "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15, 0.2],
-        "model__n_estimators":  [500, 1000, 1500, 2000],
-    }
-    logger.info("Running XGB grid search (6×4 grid, 5-fold CV = 120 fits)…")
-    grid_search = GridSearchCV(
-        gs_pipe,
-        param_grid,
-        cv=5,
-        scoring="neg_mean_absolute_error",
-        n_jobs=-1,
-        refit=False,
-        verbose=0,
-    )
-    grid_search.fit(X_train, y_train_log)
-    best_params = grid_search.best_params_
-    logger.info(
-        f"XGB grid search best: learning_rate={best_params['model__learning_rate']}, "
-        f"n_estimators={best_params['model__n_estimators']}  "
-        f"(CV MAE log={-grid_search.best_score_:.4f})"
-    )
+    def _tuned_xgb(pre: ColumnTransformer, label: str) -> tuple[Pipeline, float, int]:
+        """Grid search + early stopping for one feature set; a 5-seed XGB pipeline."""
+        # Joint grid search over M (n_estimators) and eta (learning_rate).
+        # These two are not independent: small eta needs many trees to converge,
+        # large eta converges faster but may overshoot. Searching them jointly
+        # finds the true optimum rather than two separate marginal optima.
+        base_xgb = XGBRegressor(**xgb_fixed_params)
+        gs_pipe = Pipeline(steps=[
+            ("preprocess", pre),
+            ("model", base_xgb),
+        ])
+        param_grid = {
+            "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15, 0.2],
+            "model__n_estimators":  [500, 1000, 1500, 2000],
+        }
+        logger.info(f"[{label}] Running XGB grid search (6×4 grid, 5-fold CV = 120 fits)…")
+        grid_search = GridSearchCV(
+            gs_pipe,
+            param_grid,
+            cv=5,
+            scoring="neg_mean_absolute_error",
+            n_jobs=-1,
+            refit=False,
+            verbose=0,
+        )
+        grid_search.fit(X_train, y_train_log)
+        best_params = grid_search.best_params_
+        logger.info(
+            f"[{label}] XGB grid search best: learning_rate={best_params['model__learning_rate']}, "
+            f"n_estimators={best_params['model__n_estimators']}  "
+            f"(CV MAE log={-grid_search.best_score_:.4f})"
+        )
 
-    # Early stopping: find the true optimal n_estimators given the best lr.
-    # The grid search ceiling (2000) may be too low or higher than needed —
-    # early stopping on a held-out slice tells us exactly when to stop.
-    X_tr_es, X_val_es, y_tr_es, y_val_es = train_test_split(
-        X_train, y_train_log, test_size=0.15, random_state=0
-    )
-    pre_es = clone(preprocess)
-    pre_es.fit(X_train)  # fit on full X_train so OHE sees all categories
-    xgb_es = XGBRegressor(
-        n_estimators=3000,
-        learning_rate=best_params["model__learning_rate"],
-        **xgb_fixed_params,
-        early_stopping_rounds=50,
-        eval_metric="mae",
-    )
-    xgb_es.fit(
-        pre_es.transform(X_tr_es),
-        y_tr_es,
-        eval_set=[(pre_es.transform(X_val_es), y_val_es)],
-        verbose=False,
-    )
-    optimal_n = xgb_es.best_iteration
-    logger.info(
-        f"Early stopping: optimal n_estimators={optimal_n} "
-        f"(ceiling=3000, grid search suggested {best_params['model__n_estimators']})"
-    )
+        # Early stopping: find the true optimal n_estimators given the best lr.
+        # The grid search ceiling (2000) may be too low or higher than needed —
+        # early stopping on a held-out slice tells us exactly when to stop.
+        X_tr_es, X_val_es, y_tr_es, y_val_es = train_test_split(
+            X_train, y_train_log, test_size=0.15, random_state=0
+        )
+        pre_es = clone(pre)
+        pre_es.fit(X_train)  # fit on full X_train so OHE sees all categories
+        xgb_es = XGBRegressor(
+            n_estimators=3000,
+            learning_rate=best_params["model__learning_rate"],
+            **xgb_fixed_params,
+            early_stopping_rounds=50,
+            eval_metric="mae",
+        )
+        xgb_es.fit(
+            pre_es.transform(X_tr_es),
+            y_tr_es,
+            eval_set=[(pre_es.transform(X_val_es), y_val_es)],
+            verbose=False,
+        )
+        optimal_n = xgb_es.best_iteration
+        logger.info(
+            f"[{label}] Early stopping: optimal n_estimators={optimal_n} "
+            f"(ceiling=3000, grid search suggested {best_params['model__n_estimators']})"
+        )
 
-    # Average 5 seeds (subsample/colsample make them differ): cuts variance at
-    # ~6k rows. Measured -$48 test MAE over 3 VIN splits, better on each.
-    xgb_lr = best_params["model__learning_rate"]
-    candidates["xgb"] = VotingRegressor([
-        (f"seed{s}", XGBRegressor(n_estimators=optimal_n, learning_rate=xgb_lr,
-                                  **{**xgb_fixed_params, "random_state": s}))
-        for s in range(42, 47)
-    ])
+        # Average 5 seeds (subsample/colsample make them differ): cuts variance at
+        # ~6k rows. Measured -$48 test MAE over 3 VIN splits, better on each.
+        xgb_lr = best_params["model__learning_rate"]
+        voting = VotingRegressor([
+            (f"seed{s}", XGBRegressor(n_estimators=optimal_n, learning_rate=xgb_lr,
+                                      **{**xgb_fixed_params, "random_state": s}))
+            for s in range(42, 47)
+        ])
+        return Pipeline([("preprocess", pre), ("model", voting)]), xgb_lr, optimal_n
+
+    xgb_rest, xgb_lr, optimal_n = _tuned_xgb(preprocess, "xgb")
+    xgb_cheap, _, _ = _tuned_xgb(preprocess_cheap, "xgb, cheap cars")
+    candidates["xgb"] = PriceRouted(cheap=xgb_cheap, rest=xgb_rest)
 
     def _eval(y_true_np: np.ndarray, y_pred_np: np.ndarray) -> tuple[float, float]:
         mae = float(mean_absolute_error(y_true_np, y_pred_np))
@@ -505,7 +563,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     # 5) Train + evaluate each candidate
     # -----------------------------
     for name, model in candidates.items():
-        pipe = Pipeline(steps=[
+        pipe = model if isinstance(model, PriceRouted) else Pipeline(steps=[
             ("preprocess", preprocess),
             ("model", model),
         ])
