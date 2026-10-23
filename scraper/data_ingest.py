@@ -13,7 +13,7 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
-from scraper.api_usage import increment_call, ApiCallEvent
+from scraper.api_usage import increment_call, month_total, ApiCallEvent
 from env_utils import env_int
 
 load_dotenv()
@@ -21,6 +21,9 @@ load_dotenv()
 API_KEY = os.getenv("MARKETCHECK_API_KEY", "")
 ZIP     = os.getenv("MARKETCHECK_ZIP", "94119")   # Fallback if zip rotation is disabled
 RADIUS  = env_int("MARKETCHECK_RADIUS", 100)
+# The free plan hard-stops at 500 calls a month. Scraping stops here, leaving
+# room for manual runs and the API's live Marketcheck endpoints.
+MONTHLY_CALL_BUDGET = env_int("MARKETCHECK_MONTHLY_BUDGET", 480)
 BASE    = "https://mc-api.marketcheck.com/v2"
 
 CURSORS_DIR      = Path("data/cursors")
@@ -282,6 +285,9 @@ class MarketCheckClient:
         reset_to_zero = False
 
         for _call_idx, start in enumerate(_call_starts):
+            if month_total() >= MONTHLY_CALL_BUDGET:
+                logger.warning(f"  Monthly Marketcheck budget reached ({MONTHLY_CALL_BUDGET} calls); skipping")
+                break
             logger.info(f"  Marketcheck call {_call_idx+1}/{len(_call_starts)} (start={start})")
 
             try:

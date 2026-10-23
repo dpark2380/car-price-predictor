@@ -80,3 +80,9 @@ def increment_call(event: ApiCallEvent, n: int = 1) -> None:
     day_obj["endpoints"][ep] = int(day_obj["endpoints"].get(ep, 0)) + n
 
     _atomic_write(USAGE_PATH, usage)
+
+def month_total() -> int:
+    """Calls recorded so far this calendar month (New York time, like the day keys)."""
+    month = _today_key()[:7]
+    return sum(int(d.get("total", 0)) for day, d in _read_usage().get("days", {}).items()
+               if day.startswith(month))
