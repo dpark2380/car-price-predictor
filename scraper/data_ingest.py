@@ -347,12 +347,13 @@ class MarketCheckClient:
         return all_listings
 
 
-# Map target names to additional Marketcheck API params.
-# body_style values accepted by Marketcheck: "Pickup Truck", "SUV", "Sedan", etc.
+# Map target names to additional Marketcheck API params. The filter is
+# body_type, comma-separated for several; Marketcheck silently ignores
+# body_style, which left all three targets running the same unfiltered search.
 TARGET_PARAMS = {
-    "used_cars": {},           # general — no body_type filter
-    "trucks":    {"body_style": "Pickup Truck"},
-    "suvs":      {"body_style": "SUV"},
+    "cars":   {"body_type": "Sedan,Hatchback,Coupe,Wagon,Convertible"},
+    "trucks": {"body_type": "Pickup"},
+    "suvs":   {"body_type": "SUV"},
 }
 
 
@@ -367,7 +368,7 @@ class DataIngestor:
         self,
         search_url: str = "",
         max_pages: int = 1,
-        search_target: str = "used_cars",
+        search_target: str = "cars",
     ) -> list:
         logger.info(f"Fetching from Marketcheck: {search_target} (zip=rotating, radius={RADIUS}mi)")
         params = TARGET_PARAMS.get(search_target, {})
