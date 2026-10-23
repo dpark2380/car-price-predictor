@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Template: setup.sh fills in __REPO__ and __USER__. Scrape -> train -> score every 36h. -->
+<!-- Template: setup.sh fills in __REPO__ and __USER__. Scrape -> train -> score daily. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -27,8 +27,10 @@
         <string>/Users/__USER__</string>
     </dict>
 
+    <!-- Daily: ~15 Marketcheck calls a run, ~450 a month against the free
+         plan's 500 (the scraper also stops at MARKETCHECK_MONTHLY_BUDGET). -->
     <key>StartInterval</key>
-    <integer>129600</integer>
+    <integer>86400</integer>
 
     <key>RunAtLoad</key>
     <true/>

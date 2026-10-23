@@ -3,7 +3,7 @@
 #
 #   sudo ./deploy/macmini/install.sh
 #
-# Installs the three LaunchDaemons (pipeline every 36h, API, dashboard),
+# Installs the three LaunchDaemons (pipeline daily, API, dashboard),
 # stops the Mac from sleeping, and turns on restart after power failure.
 # Re-running is safe: each daemon is unloaded and reloaded.
 set -euo pipefail
@@ -34,5 +34,5 @@ sleep 5
 curl -fsS -o /dev/null http://localhost:5001/api/stats && echo "API OK:       http://localhost:5001/api/stats" || echo "API not answering yet: see logs/api.log" >&2
 curl -fsS -o /dev/null http://localhost:3000/ && echo "Dashboard OK: http://localhost:3000" || echo "Dashboard not answering yet: see logs/web.log" >&2
 echo
-echo "First scheduled run is 36h after load. To run now (calls Marketcheck):"
+echo "The pipeline runs now (RunAtLoad), then daily. To run it again (calls Marketcheck):"
 echo "  sudo launchctl kickstart system/com.carintel.pipeline"
