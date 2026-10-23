@@ -122,6 +122,26 @@ def test_price_routed_picks_model_by_cheap_prediction():
     assert np.allclose(np.expm1(r.predict(np.array([[0.0], [1.0]]))), [5_000, 30_000])
 
 
+def test_monthly_call_budget():
+    import tempfile
+    from pathlib import Path
+    from scraper import api_usage, data_ingest
+    old_path, old_budget = api_usage.USAGE_PATH, data_ingest.MONTHLY_CALL_BUDGET
+    try:
+        api_usage.USAGE_PATH = Path(tempfile.mkdtemp()) / "usage.json"
+        month = api_usage._today_key()[:7]
+        api_usage._atomic_write(api_usage.USAGE_PATH, {"total": 9, "days": {
+            f"{month}-01": {"total": 4}, f"{month}-02": {"total": 3}, "1999-01-01": {"total": 2}}})
+        assert api_usage.month_total() == 7
+        data_ingest.MONTHLY_CALL_BUDGET = 7   # reached: no request is made
+        tmp = api_usage.USAGE_PATH.parent
+        assert data_ingest.MarketCheckClient().fetch_listings(
+            max_calls=3, page_cursor_path=tmp / "p.json", zip_cursor_path=tmp / "z.json") == []
+        assert api_usage.month_total() == 7
+    finally:
+        api_usage.USAGE_PATH, data_ingest.MONTHLY_CALL_BUDGET = old_path, old_budget
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
