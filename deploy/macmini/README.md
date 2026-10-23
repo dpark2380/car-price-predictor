@@ -1,12 +1,12 @@
 # Running Car Intel on an always-on Mac mini
 
-Moves the scheduled pipeline (scrape, retrain, rescore every 36h), the API and
+Moves the scheduled pipeline (scrape, retrain, rescore daily), the API and
 the dashboard off a laptop that sleeps through its schedule. All three run as
 LaunchDaemons, so they survive reboots without anyone logging in.
 
 | Service | Label | What |
 |---|---|---|
-| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` every 129,600 s (36h) |
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` every 86,400 s (daily) |
 | API | `com.carintel.api` | gunicorn, 1 worker x 4 threads, port 5001, restarted if it dies |
 | Dashboard | `com.carintel.web` | static `frontend/build` on port 3000 |
 

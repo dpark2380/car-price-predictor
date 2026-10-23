@@ -50,7 +50,7 @@ A full rescoring pass over 14,737 listings takes 0.2 s. Writing the scores to SQ
 ```mermaid
 flowchart LR
     MC[Marketcheck API] -->|scraper/data_ingest.py| DB[(SQLite car_intel.db)]
-    LD[launchd daemon on a Mac mini, every 36h] -->|scheduler/runner.py| SCR
+    LD[launchd daemon on a Mac mini, daily] -->|scheduler/runner.py| SCR
     SCR[scrape_job] --> DB
     SCR --> TRAIN[ml_train_job]
     TRAIN -->|ml/pipeline.py train| MODEL[(models/price_predictor.joblib)]
@@ -65,7 +65,7 @@ flowchart LR
 
 **Storage** (`db/models.py`, `db/repository.py`) is a SQLite database via SQLAlchemy with three tables: `car_listings`, `predictions`, and `popularity_snapshots`. Listings are upserted by `listing_id`; stale listings are marked inactive rather than deleted.
 
-**Scheduled retrain and rescore** (`scheduler/runner.py`) runs the scrape, train, score, and popularity-snapshot jobs in sequence, then exits. In production a launchd daemon starts it every 36 hours (see Running in production below).
+**Scheduled retrain and rescore** (`scheduler/runner.py`) runs the scrape, train, score, and popularity-snapshot jobs in sequence, then exits. In production a launchd daemon starts it daily (see Running in production below).
 
 **Modeling** (`ml/pipeline.py`) builds engineered features (vehicle age, mileage transforms, cohort medians, luxury/body-type flags, one-hot categoricals), trains and compares the four model families above, and persists the winner with its metrics and calibration offset.
 
@@ -79,11 +79,11 @@ The pipeline, API and dashboard run unattended on an always-on Mac mini as three
 
 | Service | launchd label | What it runs |
 |---|---|---|
-| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and every 129,600 s (36 h): scrape → data validation → train → score → popularity snapshot |
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and every 86,400 s (daily): scrape → data validation → train → score → popularity snapshot |
 | API | `com.carintel.api` | `api.py` under gunicorn on port 5001, restarted if it exits |
 | Dashboard | `com.carintel.web` | the built React app on port 3000 |
 
-A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. The database, model and live logs stay on the machine and are not committed.
+Each run makes up to 15 Marketcheck calls (5 each for cars, pickups and SUVs, around one of 15 rotating western-US zip codes), about 450 a month. The free plan stops at 500, so the scraper stops at a 480-call monthly budget (`MARKETCHECK_MONTHLY_BUDGET`) and the run carries on with the data it has. A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. The database, model and live logs stay on the machine and are not committed.
 
 [`outputs/run_history/`](outputs/run_history/) is a snapshot of those three CSVs as of 2026-10-16: every scheduled run since April 2026. Timestamps are UTC. Training rows before 2026-09-29 show lower MAE because they used the retracted random, non-VIN-grouped split (see Results), and runs before 2026-10-14 used the earlier model configuration.
 
@@ -167,10 +167,10 @@ npm start
 
 ### Scheduling
 
-On macOS, `deploy/macmini/setup.sh` and `install.sh` install the scheduled pipeline (see Running in production). Check a run with `launchctl print system/com.carintel.pipeline` (`runs`, `last exit code`) and `tail logs/launchd_stderr.log`. The job runs the repo's `venv/bin/python3`, so the virtualenv must exist; without it launchd fails with exit code 78. Elsewhere, cron can't express an exact 36-hour interval (its fields only divide a 24-hour day), so the closest practical equivalent is a daily run:
+On macOS, `deploy/macmini/setup.sh` and `install.sh` install the scheduled pipeline (see Running in production). Check a run with `launchctl print system/com.carintel.pipeline` (`runs`, `last exit code`) and `tail logs/launchd_stderr.log`. The job runs the repo's `venv/bin/python3`, so the virtualenv must exist; without it launchd fails with exit code 78. Elsewhere, the cron equivalent is:
 
 ```cron
-# crontab -e — daily approximation of the launchd job (not an exact 36h match)
+# crontab -e — daily, like the launchd job
 0 3 * * * cd /path/to/Car-Price-Predictor && PYTHONPATH=. venv/bin/python3 scheduler/runner.py >> logs/cron.log 2>&1
 ```
 
