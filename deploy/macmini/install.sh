@@ -15,6 +15,8 @@ for name in pipeline api web; do
   label="com.carintel.$name"
   dest="/Library/LaunchDaemons/$label.plist"
   launchctl bootout "system/$label" 2>/dev/null || true
+  # bootout returns before the old process exits; bootstrapping too soon fails with error 5.
+  for _ in $(seq 20); do launchctl print "system/$label" >/dev/null 2>&1 || break; sleep 0.5; done
   install -m 644 -o root -g wheel "$OUT/$label.plist" "$dest"
   launchctl bootstrap system "$dest"
   echo "loaded $label"
