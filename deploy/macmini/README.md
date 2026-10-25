@@ -63,9 +63,11 @@ new code on its next run.
 
 - **FileVault:** if it's on, a power cut leaves the Mac at the unlock screen
   and nothing runs until someone logs in. `install.sh` warns about it.
-- **Failures are silent.** A crashed run only shows in `logs/`. A free
-  dead-man's-switch ping (e.g. healthchecks.io) at the end of a run would
-  email you when one is missed.
+- **Missed-run alerts:** set `HEALTHCHECK_URL` in `.env` to a free
+  healthchecks.io check (period 1 day, grace 12 hours). Each full run pings
+  it, and a crashed run pings `/fail`, so you get an email when a run fails
+  or never happens, including when the Mac is off or offline. Without it,
+  failures only show in `logs/`.
 - **Rollback:** the laptop plist is in `~`. Move it back to
   `~/Library/LaunchAgents/` and `launchctl bootstrap gui/$(id -u) <plist>`,
   after unloading the mini's pipeline so only one scheduler runs.

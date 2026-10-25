@@ -8,6 +8,7 @@ Scheduling lives outside this script (launchd, see deploy/macmini/).
 import argparse
 import csv
 import os
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -245,7 +246,24 @@ def main():
         return
 
     logger.info("Running all jobs once…")
-    run_all(engine)
+    try:
+        run_all(engine)
+    except Exception:
+        ping_healthcheck("/fail")
+        raise
+    ping_healthcheck()
+
+
+def ping_healthcheck(suffix: str = "") -> None:
+    """Dead-man's switch: healthchecks.io emails you if a ping is late or a /fail
+    arrives. Unset HEALTHCHECK_URL disables it; a failed ping never fails the run."""
+    url = os.getenv("HEALTHCHECK_URL", "").strip()
+    if not url:
+        return
+    try:
+        urllib.request.urlopen(url + suffix, timeout=10)
+    except Exception as e:
+        logger.warning(f"Healthcheck ping failed: {e}")
 
 
 if __name__ == "__main__":
