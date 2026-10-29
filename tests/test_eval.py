@@ -142,6 +142,26 @@ def test_monthly_call_budget():
         api_usage.USAGE_PATH, data_ingest.MONTHLY_CALL_BUDGET = old_path, old_budget
 
 
+def test_month_end_topup():
+    from datetime import datetime
+    from scheduler import runner
+    used = [0]
+    def fake_scrape(*a):
+        used[0] += 15
+    old = runner.scrape_job, runner.month_total, runner.MONTHLY_CALL_BUDGET
+    try:
+        runner.scrape_job, runner.month_total, runner.MONTHLY_CALL_BUDGET = fake_scrape, lambda: used[0], 500
+        assert runner.month_end_topup(None, None, None, now=datetime(2026, 11, 29)) == 0  # not the last day
+        used[0] = 451
+        assert runner.month_end_topup(None, None, None, now=datetime(2026, 11, 30)) == 3  # 451 -> 496
+        assert used[0] == 496
+        runner.scrape_job = lambda *a: None   # calls not going out: one pass, then stop
+        used[0] = 0
+        assert runner.month_end_topup(None, None, None, now=datetime(2026, 12, 31)) == 1
+    finally:
+        runner.scrape_job, runner.month_total, runner.MONTHLY_CALL_BUDGET = old
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -150,4 +170,6 @@ if __name__ == "__main__":
     test_cohort_features_exclude_own_dealer()
     test_comp_price_uses_nearest_other_dealer_cars()
     test_price_routed_picks_model_by_cheap_prediction()
+    test_monthly_call_budget()
+    test_month_end_topup()
     print("ok")
