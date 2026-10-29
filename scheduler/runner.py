@@ -9,7 +9,7 @@ import argparse
 import csv
 import os
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -17,7 +17,8 @@ from loguru import logger
 from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 from db.validation import run_validation
-from scraper.data_ingest import DataIngestor
+from scraper.api_usage import NY_TZ, month_total
+from scraper.data_ingest import DataIngestor, MONTHLY_CALL_BUDGET
 from ml import pipeline
 from env_utils import env_int
 
@@ -136,6 +137,28 @@ def scrape_job(
     log_scrape(total_new, total_upd, total_active, target_names)
 
 
+def month_end_topup(repo, pred_repo, pop_repo, now: datetime | None = None) -> int:
+    """
+    On the last day of the month (New York time, like the usage counter),
+    repeat the scrape until the monthly budget can't fit another pass, so
+    calls the daily runs left unused (~50 a month, more after downtime) aren't
+    wasted. Returns the number of extra passes.
+    """
+    now = now or datetime.now(NY_TZ)
+    if (now + timedelta(days=1)).month == now.month:
+        return 0
+    per_pass = DataIngestor.CALLS_PER_TARGET * len(load_targets())
+    passes = 0
+    while passes < 20 and month_total() + per_pass <= MONTHLY_CALL_BUDGET:
+        before = month_total()
+        logger.info(f"▶ Month-end top-up pass {passes + 1} ({MONTHLY_CALL_BUDGET - before} calls left)")
+        scrape_job(repo, pred_repo, pop_repo)
+        passes += 1
+        if month_total() == before:  # no call went out (API down?): don't spin
+            break
+    return passes
+
+
 def score_job(repo: ListingRepository, pred_repo: PredictionRepository):
     logger.info("▶ Score job starting")
     # Includes recently-deactivated listings too, so predictions stay ready
@@ -199,6 +222,7 @@ def run_all(engine):
     pop = PopularityRepository(session)
     try:
         scrape_job(repo, pred, pop)
+        month_end_topup(repo, pred, pop)
         ml_train_job(repo)
         score_job(repo, pred)
         popularity_job(repo, pop)
