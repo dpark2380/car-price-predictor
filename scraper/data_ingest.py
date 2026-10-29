@@ -21,9 +21,9 @@ load_dotenv()
 API_KEY = os.getenv("MARKETCHECK_API_KEY", "")
 ZIP     = os.getenv("MARKETCHECK_ZIP", "94119")   # Fallback if zip rotation is disabled
 RADIUS  = env_int("MARKETCHECK_RADIUS", 100)
-# The free plan hard-stops at 500 calls a month. Scraping stops here, leaving
-# room for manual runs and the API's live Marketcheck endpoints.
-MONTHLY_CALL_BUDGET = env_int("MARKETCHECK_MONTHLY_BUDGET", 480)
+# The free plan hard-stops at 500 calls a month. Scraping may use all of it;
+# the API's live Marketcheck endpoints then fail until the month resets.
+MONTHLY_CALL_BUDGET = env_int("MARKETCHECK_MONTHLY_BUDGET", 500)
 BASE    = "https://mc-api.marketcheck.com/v2"
 
 CURSORS_DIR      = Path("data/cursors")
