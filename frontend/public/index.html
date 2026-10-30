@@ -14,12 +14,7 @@
       theme. Pure progressive enhancement: with JS disabled (or no saved
       preference) the page renders the default light theme via CSS alone.
     -->
-    <script>
-      try {
-        var t = localStorage.getItem("carintel-theme");
-        if (t && t !== "light") document.documentElement.classList.add("theme-" + t);
-      } catch (e) {}
-    </script>
+    <script src="%PUBLIC_URL%/theme-init.js"></script>
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <!--
       manifest.json provides metadata used when your web app is installed on a

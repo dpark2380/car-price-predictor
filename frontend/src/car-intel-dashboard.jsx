@@ -234,7 +234,9 @@ export default function CarIntelDashboard() {
       }
     };
 
-    load("deals", `${API}/deals?min_score=0`, setDeals);
+    // Listing URLs come from third-party data: only http(s) may reach an href.
+    const safeUrls = (rows) => rows.map((d) => ({ ...d, url: /^https?:\/\//i.test(d.url || "") ? d.url : null }));
+    load("deals", `${API}/deals?min_score=0`, (rows) => setDeals(safeUrls(rows)));
     load("stats", `${API}/stats`, setStats);
   }, []);
 
