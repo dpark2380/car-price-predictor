@@ -210,8 +210,12 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "location_state": dealer.get("state"),
             "location_zip":   dealer.get("zip"),
             "days_listed":    raw.get("dom", 0) or 0,
+            # Dealer-hosted photos only (media.photo_links). Marketcheck's own
+            # cached copies (photo_links_cached) embed the api_key and count
+            # against the account, so never pass on a URL that mentions either.
             "photo_url":      next((u for u in ((raw.get("media") or {}).get("photo_links") or [])
-                                    if isinstance(u, str) and u.startswith("https://")), None),
+                                    if isinstance(u, str) and u.startswith("https://")
+                                    and "api_key" not in u and "marketcheck" not in u.lower()), None),
         }
     except Exception as e:
         logger.warning(f"map_listing failed: {e}")
