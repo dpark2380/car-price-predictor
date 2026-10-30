@@ -19,7 +19,7 @@
         <string>--threads</string>
         <string>4</string>
         <string>--bind</string>
-        <string>0.0.0.0:5001</string>
+        <string>127.0.0.1:5001</string>
         <string>api:app</string>
     </array>
 
