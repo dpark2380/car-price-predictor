@@ -38,8 +38,8 @@ sudo ./deploy/macmini/install.sh
 `setup.sh` verifies the bundle's checksums, restores it, builds the venv,
 runs `tests/test_eval.py`, and renders the plists into
 `deploy/macmini/out/`. `install.sh` loads the daemons, sets the Mac to never
-sleep and to restart after a power failure, and checks that the API and
-dashboard answer.
+sleep and to restart after a power failure, and checks that the API
+answers.
 
 The API listens on `127.0.0.1:5001` only, so the Cloudflare Tunnel (below) is
 the one way in from other machines, and the dashboard lives on Cloudflare
