@@ -47,11 +47,16 @@ def _nosniff(resp):
 
 
 def _db_version() -> float:
-    """Changes whenever the pipeline writes the database."""
+    """Changes whenever the pipeline writes the database or the dealer-site check."""
+    from scraper.dealer_sites import DEALER_SITES_PATH
     try:
-        return os.path.getmtime("car_intel.db")
+        db = os.path.getmtime("car_intel.db")
     except OSError:
-        return 0.0
+        db = 0.0
+    try:
+        return max(db, os.path.getmtime(DEALER_SITES_PATH))
+    except OSError:
+        return db
 
 
 def db_cached(*params, maxsize=8):
@@ -169,7 +174,11 @@ def _deal_records(version):
         seen = pd.to_datetime(df["last_seen"], errors="coerce")
         fresh = (seen >= pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=MAX_DAYS_SINCE_SEEN)) \
             & (pd.to_numeric(df["days_listed"], errors="coerce").fillna(0) <= MAX_DAYS_LISTED)
-        df = df[fresh].sort_values("deal_score", ascending=False)
+        # Ads whose dealer website is down can't be followed up: hide them too.
+        from scraper.dealer_sites import host_of, load_down
+        down = load_down()
+        reachable = ~df["url"].map(host_of).isin(down) if down else True
+        df = df[fresh & reachable].sort_values("deal_score", ascending=False)
 
         return [{
             "listing_id":      row.get("listing_id"),
@@ -281,7 +290,7 @@ def stats():
             "price_max":       sf(df["price"].max()) if "price" in df else None,
             "avg_mileage":     sf(df["mileage"].mean()) if "mileage" in df else 0,
             # When the pipeline last wrote the data, not when this was served.
-            "last_updated":    datetime.fromtimestamp(_db_version(), timezone.utc).isoformat()
+            "last_updated":    datetime.fromtimestamp(os.path.getmtime("car_intel.db"), timezone.utc).isoformat()
         })
     finally:
         session.close()

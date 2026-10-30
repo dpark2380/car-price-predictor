@@ -198,6 +198,18 @@ def test_map_listing_keeps_first_https_photo():
     assert map_listing({**raw, "media": stub})["photo_url"] == "https://cdn.example/2.jpg"
 
 
+def test_dealer_sites_round_trip_and_host():
+    import tempfile
+    from pathlib import Path
+    from scraper import dealer_sites as ds
+    path = Path(tempfile.mkdtemp()) / "sites.json"
+    assert ds.load_down(path) == set()                      # no check yet: hide nothing
+    ds.save_down(["dead.example"], 3, path)
+    assert ds.load_down(path) == {"dead.example"}
+    assert ds.host_of("https://www.dead.example/cars/1?x=2") == "www.dead.example"
+    assert ds.host_of(None) is None and ds.host_of("not a url") is None
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -210,4 +222,5 @@ if __name__ == "__main__":
     test_month_end_topup()
     test_purge_cloudflare_cache()
     test_map_listing_keeps_first_https_photo()
+    test_dealer_sites_round_trip_and_host()
     print("ok")
