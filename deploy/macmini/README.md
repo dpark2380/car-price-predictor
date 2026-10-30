@@ -47,6 +47,19 @@ network. To reach it from outside (Tailscale, Cloudflare Tunnel), rebuild it
 against that URL: `API_URL=https://.../api ./deploy/macmini/setup.sh`, then
 re-run `install.sh`.
 
+## Public site
+
+- Dashboard: https://cars.danielpark.fyi on Cloudflare Pages (project
+  `car-price-predictor`, root `frontend`, build `npm run build`, output
+  `build`, env `REACT_APP_API_URL=https://cars-api.danielpark.fyi/api`).
+  Every push to `main` redeploys it.
+- API: https://cars-api.danielpark.fyi through the Cloudflare Tunnel
+  `mac-mini` (route -> `http://localhost:5001`). `cloudflared` runs as the
+  LaunchDaemon `com.cloudflare.cloudflared`; logs in
+  `/Library/Logs/com.cloudflare.cloudflared.err.log`.
+- Browsers may call the API only from the origins listed in `api.py`
+  (`CORS(...)`); add one there if the dashboard moves.
+
 ## Operating it
 
 ```bash
