@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
-import { dealTier, dealTierLabel } from "./utils/scoreColor.js";
-import Spinner from "./components/common/Spinner";
-import ArcGauge from "./components/common/Gauge";
+import { dealTier } from "./utils/scoreColor.js";
 import DealBadge from "./components/deals/DealBadge";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
@@ -21,8 +19,8 @@ const SIZE_PRICE_BANDS = {
 // public/index.html reads, so a refresh restores it with no flash.
 const THEME_KEY = "carintel-theme";
 
-// Small semicircular-gauge glyph used as the brand mark — a static echo of
-// the ArcGauge component, not a data visualization.
+// Small semicircular-gauge glyph used as the brand mark (a fuel-gauge echo,
+// not a data visualization).
 function BrandMark({ size = 22 }) {
   const r = size * 0.42;
   const cx = size / 2;
@@ -131,8 +129,8 @@ function ThemeToggle() {
 
 function FilterSelect({ label, value, onChange, children, minWidth = 120, disabled = false }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, opacity: disabled ? 0.45 : 1 }}>
-      <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "var(--color-text-muted)" }}>{label}</span>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, opacity: disabled ? 0.45 : 1 }}>
+      <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 12.5, color: "var(--color-text-muted)" }}>{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -153,36 +151,61 @@ function FilterSelect({ label, value, onChange, children, minWidth = 120, disabl
       >
         {children}
       </select>
+    </label>
+  );
+}
+
+// Minimum-grade filter as labelled choices; value is the lowest deal tier
+// shown (scoreColor.js: 3 = Fair price, 4 = Good deal, 5 = Great deal).
+const GRADE_CHOICES = [
+  { tier: 1, label: "Any price" },
+  { tier: 3, label: "Fair or better" },
+  { tier: 4, label: "Good deals" },
+  { tier: 5, label: "Great deals only" },
+];
+
+function GradeFilter({ value, onChange }) {
+  return (
+    <div role="group" aria-label="Show listings" className="grade-filter" style={{ display: "inline-flex", gap: 1, background: "var(--color-border)", border: "1px solid var(--color-border)", borderRadius: 6, overflow: "hidden" }}>
+      {GRADE_CHOICES.map(({ tier, label }) => {
+        const on = value === tier;
+        return (
+          <button
+            key={tier}
+            aria-pressed={on}
+            onClick={() => onChange(tier)}
+            style={{
+              background: on ? "var(--color-accent)" : "var(--color-surface)",
+              color: on ? "var(--color-on-accent)" : "var(--color-text-secondary)",
+              border: "none",
+              padding: "6px 12px",
+              fontFamily: "'Public Sans', sans-serif",
+              fontSize: 13,
+              fontWeight: on ? 600 : 500,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-// Five-block grade scale used for the "minimum grade" filter — the same
-// visual language as DealBadge, driven by a slider position rather than a
-// listing's score.
-function GradeScale({ value, onChange }) {
-  const colors = ["var(--color-deal-bad)", "var(--color-deal-poor)", "var(--color-deal-fair)", "var(--color-deal-good)", "var(--color-deal-excellent)"];
-  return (
-    <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
-      {[1, 2, 3, 4, 5].map((tier) => (
-        <button
-          key={tier}
-          onClick={() => onChange(tier)}
-          title={`${tier} — ${["Overpriced", "Below fair", "Fair price", "Good deal", "Great deal"][tier - 1]} or better`}
-          style={{
-            width: 16,
-            height: 16,
-            borderRadius: 2,
-            padding: 0,
-            cursor: "pointer",
-            background: tier <= value ? colors[tier - 1] : "transparent",
-            border: `1px solid ${tier <= value ? colors[tier - 1] : "var(--color-border-strong)"}`,
-          }}
-        />
-      ))}
-    </div>
-  );
+// "$6,125 below market" reads the right way round; arrows and a "Savings"
+// column that goes negative did not.
+function vsMarket(savings) {
+  if (savings == null) return { text: "—", color: "var(--color-text-muted)" };
+  if (Math.abs(savings) < 50) return { text: "At market", color: "var(--color-text-secondary)" };
+  return savings > 0
+    ? { text: `${fmt$(savings)} below market`, color: "var(--color-success)" }
+    : { text: `${fmt$(-savings)} above market`, color: "var(--color-danger)" };
 }
+
+const fmtUpdated = (iso) =>
+  new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 export default function CarIntelDashboard() {
   const [view, setView] = useState("home"); // "home" | "results" | "estimator"
@@ -214,7 +237,6 @@ export default function CarIntelDashboard() {
   const [estYear, setEstYear] = useState("");
   const [estMileage, setEstMileage] = useState("");
   const [estTrim, setEstTrim] = useState("");
-  const [estAccidents, setEstAccidents] = useState("0");
   const [estResult, setEstResult] = useState(null);
   const [estLoading, setEstLoading] = useState(false);
   const [estError, setEstError] = useState(null);
@@ -228,7 +250,7 @@ export default function CarIntelDashboard() {
         setter(data);
       } catch (e) {
         console.error(`Failed to load ${key}:`, e);
-        if (key === "stats") setApiError(true);
+        setApiError(true);
       } finally {
         setLoading((l) => ({ ...l, [key]: false }));
       }
@@ -306,14 +328,6 @@ export default function CarIntelDashboard() {
       .filter((d) => d.deal_score != null)
       .slice()
       .sort((a, b) => (b.deal_score ?? 0) - (a.deal_score ?? 0));
-  }, [deals]);
-
-  // Real, computed metric for the hero gauge — the average grade across
-  // every currently scored listing, not a placeholder number.
-  const avgScore = useMemo(() => {
-    const scored = (deals || []).filter((d) => d.deal_score != null);
-    if (!scored.length) return null;
-    return scored.reduce((sum, d) => sum + d.deal_score, 0) / scored.length;
   }, [deals]);
 
   useEffect(() => {
@@ -428,7 +442,15 @@ export default function CarIntelDashboard() {
     /* Window-sticker plate: mimics a Monroney-style spec label. Reserved for
        the expanded listing panel and the estimator result — not used as
        generic chrome elsewhere. */
-    .sticker-label { font-family: 'Public Sans', sans-serif; font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-secondary); }
+    .sticker-label { font-family: 'Public Sans', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-secondary); }
+
+    /* Results table: one grid shared by header and rows. On phones it folds
+       into two columns (vehicle | price, then vs-market | grade) and drops
+       the secondary columns instead of scrolling sideways. */
+    .deal-grid { display: grid; grid-template-columns: minmax(0,1fr) 100px 110px 170px 100px 56px 120px; min-width: 860px; align-items: center; column-gap: 12px; }
+    .deal-row:focus-visible { outline-offset: -2px; }
+    .best-pick { transition: background 0.15s; }
+    .best-pick:hover { background: var(--color-surface-subtle) !important; }
 
     @media (max-width: 860px) {
       .hero-grid { grid-template-columns: 1fr !important; gap: 28px !important; }
@@ -436,6 +458,13 @@ export default function CarIntelDashboard() {
     }
     @media (max-width: 720px) {
       .header-stats { display: none !important; }
+      .page-pad { padding-left: 16px !important; padding-right: 16px !important; }
+      .deal-grid { grid-template-columns: minmax(0,1fr) auto; min-width: 0; row-gap: 6px; }
+      .deal-head, .col-optional { display: none !important; }
+      .grade-filter { display: grid !important; grid-template-columns: 1fr 1fr; width: 100%; }
+      .deal-row.deal-grid > :nth-child(2), .deal-row.deal-grid > :last-child { justify-self: end; }
+      .filters > label, .filters > div { flex: 1 1 140px; }
+      .filters select { width: 100%; }
     }
     @media (max-width: 620px) {
       .best-deal-chip { display: none !important; }
@@ -471,7 +500,7 @@ export default function CarIntelDashboard() {
       >
         {value}
       </div>
-      <div style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 10, color: "var(--color-text-subtle)" }}>{label}</div>
+      <div style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "var(--color-text-subtle)" }}>{label}</div>
     </div>
   );
 
@@ -511,14 +540,28 @@ export default function CarIntelDashboard() {
     </button>
   );
 
+  const errorBanner = apiError && (
+    <div role="alert" style={{ background: "var(--color-danger-surface)", border: "1px solid var(--color-danger)", color: "var(--color-danger-strong)", padding: "10px 24px", fontSize: 14, textAlign: "center", position: "relative", zIndex: 20 }}>
+      Listings can't load right now. Check your connection, then refresh the page in a minute.
+    </div>
+  );
+
+  const footer = (
+    <footer className="page-pad" style={{ position: "relative", zIndex: 1, borderTop: "1px solid var(--color-border)", padding: "16px 32px", display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", fontSize: 12.5, color: "var(--color-text-subtle)" }}>
+      <div>Car Intel compares asking prices with a market-value model trained on recent listings.</div>
+      <div>{stats.last_updated ? `Data updated ${fmtUpdated(stats.last_updated)}` : ""}</div>
+    </footer>
+  );
+
   // ── HOME PAGE ────────────────────────────────────────────────────────────────
   if (view === "home") {
     return (
       <div style={{ minHeight: "100vh", background: "var(--color-bg)", color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif", position: "relative", display: "flex", flexDirection: "column" }}>
         <style>{sharedStyles}</style>
         {gridBg}
+        {errorBanner}
 
-        <header style={{ position: "relative", zIndex: 10, borderBottom: "1px solid var(--color-border)", background: "var(--color-bg-translucent)", backdropFilter: "blur(12px)", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 58 }}>
+        <header className="page-pad" style={{ position: "relative", zIndex: 10, borderBottom: "1px solid var(--color-border)", background: "var(--color-bg-translucent)", backdropFilter: "blur(12px)", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 58 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
             {brandButton()}
             <button
@@ -535,7 +578,7 @@ export default function CarIntelDashboard() {
           </div>
         </header>
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "56px 32px 40px", position: "relative", zIndex: 1 }}>
+        <main className="page-pad" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", padding: "56px 32px 40px", position: "relative", zIndex: 1 }}>
           <div
             className="panel-in hero-grid"
             style={{
@@ -549,11 +592,11 @@ export default function CarIntelDashboard() {
             }}
           >
             <div>
-              <div style={{ fontFamily: "'Overpass', sans-serif", fontWeight: 800, fontSize: 46, lineHeight: 1.08, letterSpacing: "-0.01em", color: "var(--color-text-primary)" }}>
+              <h1 style={{ fontFamily: "'Overpass', sans-serif", fontWeight: 800, fontSize: "clamp(34px, 6vw, 46px)", lineHeight: 1.08, letterSpacing: "-0.01em", color: "var(--color-text-primary)" }}>
                 Know what a used car is really worth.
-              </div>
-              <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 15, color: "var(--color-text-secondary)", marginTop: 16, maxWidth: 440, lineHeight: 1.55 }}>
-                Car Intel grades {isLoading ? "every" : fmtN(stats.graded_listings)} live listing against a market-value model, so you can tell a fair price from an inflated one before you call the dealer.
+              </h1>
+              <p style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 16, color: "var(--color-text-secondary)", marginTop: 16, maxWidth: 460, lineHeight: 1.55 }}>
+                Car Intel compares {isLoading ? "every" : fmtN(stats.graded_listings)} used-car listings with what similar cars sell for, so you can tell a fair price from an inflated one before you call the dealer.
               </p>
               <div style={{ display: "flex", gap: 10, marginTop: 28 }}>
                 <button
@@ -572,17 +615,39 @@ export default function CarIntelDashboard() {
               </div>
             </div>
 
-            <div style={{ display: "flex", justifyContent: "center", background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 12, boxShadow: "var(--shadow-panel)", padding: "22px 20px 18px" }}>
-              {avgScore != null ? (
-                <ArcGauge value={avgScore} size={190} label="Average grade, live inventory" sublabel={dealTierLabel(avgScore)} />
+            <section aria-labelledby="best-today" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 12, boxShadow: "var(--shadow-panel)", padding: "18px 0 8px" }}>
+              <h2 id="best-today" style={{ fontFamily: "'Overpass', sans-serif", fontSize: 16, fontWeight: 700, padding: "0 20px 10px" }}>Best deals right now</h2>
+              {loading.deals ? (
+                [0, 1, 2].map((i) => (
+                  <div key={i} aria-hidden="true" style={{ margin: "10px 20px", height: 44, borderRadius: 4, background: "var(--color-surface-subtle)", animation: "pulse 1.4s infinite" }} />
+                ))
               ) : (
-                <div style={{ height: 150, display: "flex", alignItems: "center", color: "var(--color-text-subtle)", fontSize: 13 }}>Loading gauge…</div>
+                topTickerDeals.slice(0, 3).map((d) => {
+                  const vm = vsMarket(d.savings);
+                  return (
+                    <button
+                      key={d.listing_id}
+                      className="best-pick"
+                      onClick={() => { setSelectedDeal(d); setView("results"); }}
+                      style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", borderTop: "1px solid var(--color-border)", padding: "12px 20px", cursor: "pointer", color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif" }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ fontSize: 14, fontWeight: 600 }}>{d.year} {d.make} {d.model}</span>
+                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700 }}>{fmt$(d.price)}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 3, fontSize: 13 }}>
+                        <span style={{ color: "var(--color-text-secondary)" }}>{fmtN(d.mileage)} mi, {d.location_state}</span>
+                        <span style={{ color: vm.color, fontWeight: 600 }}>{vm.text}</span>
+                      </div>
+                    </button>
+                  );
+                })
               )}
-            </div>
+            </section>
           </div>
 
           <div style={{ width: "100%", maxWidth: 1040, marginTop: 40, background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 10, boxShadow: "var(--shadow-panel)", padding: "22px 26px" }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div className="filters" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
               <FilterSelect label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }} minWidth={140}>
                 <option value="">Any make</option>
                 {makeOptions.map((m) => (
@@ -630,14 +695,14 @@ export default function CarIntelDashboard() {
               </div>
 
               <div style={{ display: "flex", gap: 4, alignItems: "flex-end" }}>
-                <FilterSelect label="Min mileage" value={minMileage} onChange={setMinMileage} minWidth={105}>
+                <FilterSelect label="Mileage from" value={minMileage} onChange={setMinMileage} minWidth={105}>
                   <option value="">Any</option>
                   {[10000, 25000, 50000, 75000, 100000, 125000, 150000].map((m) => (
                     <option key={m} value={m}>{(m / 1000).toFixed(0)}k mi</option>
                   ))}
                 </FilterSelect>
                 <span style={{ color: "var(--color-text-subtle)", paddingBottom: 9 }}>–</span>
-                <FilterSelect label="Max mileage" value={maxMileage} onChange={setMaxMileage} minWidth={105}>
+                <FilterSelect label="Mileage to" value={maxMileage} onChange={setMaxMileage} minWidth={105}>
                   <option value="">Any</option>
                   {[25000, 50000, 75000, 100000, 125000, 150000, 200000].map((m) => (
                     <option key={m} value={m}>{(m / 1000).toFixed(0)}k mi</option>
@@ -647,9 +712,13 @@ export default function CarIntelDashboard() {
             </div>
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px 20px", marginTop: 22, paddingTop: 18, borderTop: "1px solid var(--color-surface-subtle)" }}>
-              <div style={{ fontSize: 12.5, color: "var(--color-text-subtle)" }}>
-                {filteredDeals.length > 0 ? `${fmtN(filteredDeals.length)} listings match` : ""}
-              </div>
+              <button
+                className="home-search-btn"
+                onClick={() => setView("results")}
+                style={{ background: "var(--color-accent)", color: "var(--color-on-accent)", border: "none", borderRadius: 6, padding: "9px 18px", fontFamily: "'Public Sans', sans-serif", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+              >
+                {loading.deals ? "Show listings" : `Show ${fmtN(filteredDeals.length)} listings`}
+              </button>
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
                 {[
                   { label: "Trucks", action: () => { setBodyFilter("Truck"); setView("results"); } },
@@ -662,7 +731,7 @@ export default function CarIntelDashboard() {
                     key={label}
                     className="chip-btn"
                     onClick={action}
-                    style={{ background: "none", border: "none", color: "var(--color-text-secondary)", padding: "2px 0", fontFamily: "'Public Sans', sans-serif", fontSize: 12.5, fontWeight: 500, cursor: "pointer" }}
+                    style={{ background: "none", border: "none", color: "var(--color-text-secondary)", padding: "2px 0", fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, fontWeight: 500, cursor: "pointer" }}
                   >
                     {label}
                   </button>
@@ -670,14 +739,9 @@ export default function CarIntelDashboard() {
               </div>
             </div>
           </div>
-        </div>
+        </main>
 
-        <footer style={{ position: "relative", zIndex: 1, borderTop: "1px solid var(--color-border)", padding: "14px 32px", display: "flex", justifyContent: "space-between" }}>
-          <div style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "var(--color-text-subtle)" }}>Car Intel — priced with a market-value model</div>
-          <div style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "var(--color-text-subtle)" }}>
-            {stats.last_updated ? `Updated ${new Date(stats.last_updated).toLocaleTimeString()}` : ""}
-          </div>
-        </footer>
+        {footer}
       </div>
     );
   }
@@ -693,27 +757,30 @@ export default function CarIntelDashboard() {
       setEstError(null);
       setEstResult(null);
       try {
-        const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, accident_count: estAccidents, ...(estTrim && { trim: estTrim }) });
+        const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, ...(estTrim && { trim: estTrim }) });
         const res = await fetch(`${API}/predict?${params}`);
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        const data = await res.json().catch(() => ({}));
+        // The API's 400 messages are written for people ("year must be between …").
+        if (!res.ok || data.error) throw new Error(res.status === 400 && data.error ? data.error : "The estimate isn't available right now. Try again in a minute.");
         setEstResult(data);
       } catch (e) {
-        setEstError(e.message);
+        setEstError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : e.message);
       } finally {
         setEstLoading(false);
       }
     };
 
     const inputStyle = { background: "var(--color-surface)", border: "1px solid var(--color-border)", boxShadow: "var(--shadow-inset)", borderRadius: 5, padding: "10px 11px", fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, color: "var(--color-text-primary)", width: "100%", outline: "none", boxSizing: "border-box" };
-    const labelStyle = { fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "var(--color-text-muted)", display: "block", marginBottom: 4 };
+    const labelStyle = { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: "var(--color-text-muted)", display: "block", marginBottom: 4 };
+    const maxYear = new Date().getFullYear() + 1;
 
     return (
       <div style={{ minHeight: "100vh", background: "var(--color-bg)", color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif", position: "relative" }}>
         <style>{sharedStyles}</style>
         {gridBg}
+        {errorBanner}
 
-        <header style={{ position: "relative", zIndex: 10, borderBottom: "1px solid var(--color-border)", background: "var(--color-bg-translucent)", backdropFilter: "blur(12px)", padding: "0 32px", display: "flex", alignItems: "center", height: 58, gap: 18 }}>
+        <header className="page-pad" style={{ position: "relative", zIndex: 10, borderBottom: "1px solid var(--color-border)", background: "var(--color-bg-translucent)", backdropFilter: "blur(12px)", padding: "0 32px", display: "flex", alignItems: "center", height: 58, gap: 18 }}>
           {brandButton(() => setView("home"))}
           <div style={{ width: 1, height: 20, background: "var(--color-border)" }} />
           <div style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 13, fontWeight: 600, color: "var(--color-text-secondary)" }}>Price check</div>
@@ -721,15 +788,15 @@ export default function CarIntelDashboard() {
           <ThemeToggle />
         </header>
 
-        <div style={{ display: "flex", justifyContent: "center", padding: "56px 32px", position: "relative", zIndex: 1 }}>
-          <div className="panel-in" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 12, boxShadow: "var(--shadow-panel)", padding: "36px 40px", width: "100%", maxWidth: 540, animation: "panelIn 0.35s ease" }}>
-            <div style={{ fontFamily: "'Overpass', sans-serif", fontWeight: 700, fontSize: 20, marginBottom: 4 }}>Estimate a fair price</div>
-            <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 24 }}>Enter the basics and the model will estimate current market value.</p>
+        <main className="page-pad" style={{ display: "flex", justifyContent: "center", padding: "56px 32px", position: "relative", zIndex: 1 }}>
+          <div className="panel-in" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 12, boxShadow: "var(--shadow-panel)", padding: "clamp(22px, 5vw, 36px) clamp(18px, 5vw, 40px)", width: "100%", maxWidth: 540, animation: "panelIn 0.35s ease" }}>
+            <h1 style={{ fontFamily: "'Overpass', sans-serif", fontWeight: 700, fontSize: 22, marginBottom: 4 }}>Estimate a fair price</h1>
+            <p style={{ fontSize: 14, color: "var(--color-text-secondary)", marginBottom: 24, lineHeight: 1.5 }}>Tell us the car and its mileage to see what similar cars are listed for.</p>
 
             <div className="est-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label style={labelStyle}>Make</label>
-                <select style={inputStyle} value={estMake} onChange={(e) => { setEstMake(e.target.value); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
+                <label htmlFor="est-make" style={labelStyle}>Make</label>
+                <select id="est-make" style={inputStyle} value={estMake} onChange={(e) => { setEstMake(e.target.value); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
                   <option value="">Select make</option>
                   {makeOptions.map((m) => (
                     <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
@@ -737,8 +804,8 @@ export default function CarIntelDashboard() {
                 </select>
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <label style={{ ...labelStyle, opacity: !estMake ? 0.45 : 1 }}>Model</label>
-                <select style={{ ...inputStyle, opacity: !estMake ? 0.45 : 1 }} value={estModel} onChange={(e) => { setEstModel(e.target.value); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
+                <label htmlFor="est-model" style={{ ...labelStyle, opacity: !estMake ? 0.45 : 1 }}>Model</label>
+                <select id="est-model" style={{ ...inputStyle, opacity: !estMake ? 0.45 : 1 }} value={estModel} onChange={(e) => { setEstModel(e.target.value); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
                   <option value="">Select model</option>
                   {estModelOptions.map((m) => (
                     <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
@@ -747,8 +814,8 @@ export default function CarIntelDashboard() {
               </div>
               {estTrimOptions.length > 0 && (
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={{ ...labelStyle, opacity: !estModel ? 0.45 : 1 }}>Trim</label>
-                  <select style={{ ...inputStyle, opacity: !estModel ? 0.45 : 1 }} value={estTrim} onChange={(e) => { setEstTrim(e.target.value); setEstResult(null); }} disabled={!estModel}>
+                  <label htmlFor="est-trim" style={{ ...labelStyle, opacity: !estModel ? 0.45 : 1 }}>Trim (optional)</label>
+                  <select id="est-trim" style={{ ...inputStyle, opacity: !estModel ? 0.45 : 1 }} value={estTrim} onChange={(e) => { setEstTrim(e.target.value); setEstResult(null); }} disabled={!estModel}>
                     <option value="">Any trim</option>
                     {estTrimOptions.map((t) => (
                       <option key={t} value={t}>{t}</option>
@@ -757,21 +824,17 @@ export default function CarIntelDashboard() {
                 </div>
               )}
               <div>
-                <label style={labelStyle}>Year</label>
-                <input style={inputStyle} type="number" placeholder="e.g. 2019" min="1990" max="2025" value={estYear} onChange={(e) => setEstYear(e.target.value)} />
+                <label htmlFor="est-year" style={labelStyle}>Year</label>
+                <input id="est-year" style={inputStyle} type="number" inputMode="numeric" placeholder="e.g. 2019" min="1980" max={maxYear} value={estYear} onChange={(e) => setEstYear(e.target.value)} />
               </div>
               <div>
-                <label style={labelStyle}>Mileage</label>
-                <input style={inputStyle} type="number" placeholder="e.g. 45000" min="0" value={estMileage} onChange={(e) => setEstMileage(e.target.value)} />
-              </div>
-              <div>
-                <label style={labelStyle}>Accidents</label>
-                <input style={inputStyle} type="number" placeholder="0" min="0" max="10" value={estAccidents} onChange={(e) => setEstAccidents(e.target.value)} />
+                <label htmlFor="est-mileage" style={labelStyle}>Mileage</label>
+                <input id="est-mileage" style={inputStyle} type="number" inputMode="numeric" placeholder="e.g. 45000" min="0" value={estMileage} onChange={(e) => setEstMileage(e.target.value)} />
               </div>
             </div>
 
             {estError && (
-              <div style={{ marginTop: 16, fontSize: 13, color: "var(--color-danger-strong)", background: "var(--color-danger-surface)", border: "1px solid var(--color-danger)", borderRadius: 5, padding: "10px 14px" }}>
+              <div role="alert" style={{ marginTop: 16, fontSize: 14, color: "var(--color-danger-strong)", background: "var(--color-danger-surface)", border: "1px solid var(--color-danger)", borderRadius: 5, padding: "10px 14px" }}>
                 {estError}
               </div>
             )}
@@ -791,44 +854,32 @@ export default function CarIntelDashboard() {
                   <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 40, color: "var(--color-accent)", marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
                     {fmt$(estResult.predicted_price)}
                   </div>
-                  <div style={{ fontSize: 12.5, color: "var(--color-text-muted)", marginTop: 8 }}>
-                    {estYear} {estMake.charAt(0).toUpperCase() + estMake.slice(1)} {estModel.charAt(0).toUpperCase() + estModel.slice(1)} · {parseInt(estMileage).toLocaleString()} mi
+                  <div style={{ fontSize: 14, color: "var(--color-text-secondary)", marginTop: 8 }}>
+                    {estYear} {estMake.charAt(0).toUpperCase() + estMake.slice(1)} {estModel.charAt(0).toUpperCase() + estModel.slice(1)}{estTrim ? ` ${estTrim}` : ""}, {parseInt(estMileage).toLocaleString()} mi
                   </div>
+                  <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 10, lineHeight: 1.5 }}>
+                    A typical asking price for this car right now. Condition, options and service history can move a real price either way.
+                  </p>
                 </div>
               </div>
             )}
           </div>
-        </div>
+        </main>
       </div>
     );
   }
 
   // ── RESULTS PAGE ─────────────────────────────────────────────────────────────
-  const ROW_COLUMNS = "1fr 90px 110px 110px 100px 80px 120px";
+  const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minYear || maxYear || minMileage || maxMileage || minStars > 1;
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--color-bg)", color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif", position: "relative" }}>
       <style>{sharedStyles}</style>
       {gridBg}
-
-      {apiError && (
-        <div
-          style={{
-            background: "var(--color-danger-surface)",
-            border: "1px solid var(--color-danger)",
-            color: "var(--color-danger-strong)",
-            padding: "10px 24px",
-            fontSize: 13,
-            textAlign: "center",
-            position: "relative",
-            zIndex: 20,
-          }}
-        >
-          Couldn't connect to the API at {API}. Make sure api.py is running.
-        </div>
-      )}
+      {errorBanner}
 
       <header
+        className="page-pad"
         style={{
           position: "relative",
           zIndex: 10,
@@ -846,17 +897,17 @@ export default function CarIntelDashboard() {
         <div style={{ display: "flex", alignItems: "center", gap: 18, flexShrink: 0 }}>
           {brandButton(() => { setView("home"); resetFilters(); })}
           <div style={{ width: 1, height: 20, background: "var(--color-border)" }} />
-          <button className="nav-link" onClick={() => setView("estimator")} style={{ background: "none", border: "none", fontFamily: "'Public Sans', sans-serif", fontSize: 13, fontWeight: 600, color: "var(--color-text-secondary)", cursor: "pointer", padding: 0 }}>
+          <button className="nav-link" onClick={() => setView("estimator")} style={{ background: "none", border: "none", fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, fontWeight: 600, color: "var(--color-text-secondary)", cursor: "pointer", padding: 0 }}>
             Price check
           </button>
         </div>
 
         {currentTicker.make && (
           <div className="best-deal-chip" style={{ display: "flex", alignItems: "center", gap: 9, background: "var(--color-surface-subtle)", border: "1px solid var(--color-border)", borderRadius: 5, boxShadow: "var(--shadow-inset)", padding: "6px 14px", minWidth: 0, overflow: "hidden" }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-success)", animation: "pulse 2s infinite", flexShrink: 0 }} />
-            <span style={{ fontFamily: "'Public Sans', sans-serif", fontSize: 11.5, color: "var(--color-text-muted)", flexShrink: 0 }}>Best deal:</span>
-            <span style={{ fontSize: 11.5, color: "var(--color-text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentTicker.year} {currentTicker.make} {currentTicker.model}</span>
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, color: "var(--color-accent)", fontWeight: 700, flexShrink: 0 }}>{fmt$(currentTicker.price)}</span>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--color-success)", flexShrink: 0 }} />
+            <span style={{ fontSize: 12.5, color: "var(--color-text-muted)", flexShrink: 0 }}>Best deal:</span>
+            <span style={{ fontSize: 12.5, color: "var(--color-text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentTicker.year} {currentTicker.make} {currentTicker.model}</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, color: "var(--color-accent)", fontWeight: 700, flexShrink: 0 }}>{fmt$(currentTicker.price)}</span>
           </div>
         )}
 
@@ -866,10 +917,11 @@ export default function CarIntelDashboard() {
         </div>
       </header>
 
-      <main style={{ position: "relative", zIndex: 1, padding: "26px 32px", maxWidth: 1400, margin: "0 auto" }}>
+      <main className="page-pad" style={{ position: "relative", zIndex: 1, padding: "26px 32px", maxWidth: 1400, margin: "0 auto" }}>
         <div className="panel-in" style={{ animation: "panelIn 0.3s ease" }}>
+          <h1 style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>Used car listings graded by price</h1>
           <div style={{ marginBottom: 16, background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 8, boxShadow: "var(--shadow-panel)", padding: "16px 18px" }}>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div className="filters" style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
               <FilterSelect label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }} minWidth={128}>
                 <option value="">Any make</option>
                 {makeOptions.map((m) => (
@@ -900,215 +952,188 @@ export default function CarIntelDashboard() {
                 </FilterSelect>
               )}
 
-              <div style={{ display: "flex", gap: 4, alignItems: "flex-end" }}>
-                <FilterSelect label="Year from" value={minYear} onChange={setMinYear} minWidth={86}>
-                  <option value="">Any</option>
-                  {yearOptions.map((y) => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </FilterSelect>
-                <span style={{ color: "var(--color-text-subtle)", paddingBottom: 9 }}>–</span>
-                <FilterSelect label="Year to" value={maxYear} onChange={setMaxYear} minWidth={86}>
-                  <option value="">Any</option>
-                  {[...yearOptions].reverse().map((y) => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </FilterSelect>
-              </div>
+              <FilterSelect label="Year from" value={minYear} onChange={setMinYear} minWidth={90}>
+                <option value="">Any</option>
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </FilterSelect>
+              <FilterSelect label="Year to" value={maxYear} onChange={setMaxYear} minWidth={90}>
+                <option value="">Any</option>
+                {[...yearOptions].reverse().map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </FilterSelect>
 
-              <div style={{ display: "flex", gap: 4, alignItems: "flex-end" }}>
-                <FilterSelect label="Min mileage" value={minMileage} onChange={setMinMileage} minWidth={105}>
-                  <option value="">Any</option>
-                  {[10000, 25000, 50000, 75000, 100000, 125000, 150000].map((m) => (
-                    <option key={m} value={m}>{(m / 1000).toFixed(0)}k mi</option>
-                  ))}
-                </FilterSelect>
-                <span style={{ color: "var(--color-text-subtle)", paddingBottom: 9 }}>–</span>
-                <FilterSelect label="Max mileage" value={maxMileage} onChange={setMaxMileage} minWidth={105}>
-                  <option value="">Any</option>
-                  {[25000, 50000, 75000, 100000, 125000, 150000, 200000].map((m) => (
-                    <option key={m} value={m}>{(m / 1000).toFixed(0)}k mi</option>
-                  ))}
-                </FilterSelect>
-              </div>
+              <FilterSelect label="Mileage from" value={minMileage} onChange={setMinMileage} minWidth={110}>
+                <option value="">Any</option>
+                {[10000, 25000, 50000, 75000, 100000, 125000, 150000].map((m) => (
+                  <option key={m} value={m}>{(m / 1000).toFixed(0)}k mi</option>
+                ))}
+              </FilterSelect>
+              <FilterSelect label="Mileage to" value={maxMileage} onChange={setMaxMileage} minWidth={110}>
+                <option value="">Any</option>
+                {[25000, 50000, 75000, 100000, 125000, 150000, 200000].map((m) => (
+                  <option key={m} value={m}>{(m / 1000).toFixed(0)}k mi</option>
+                ))}
+              </FilterSelect>
 
-              <div style={{ flex: 1 }} />
-
-              {(makeFilter || modelFilter || sizeFilter || bodyFilter || minYear || maxYear || minMileage || maxMileage || minStars > 1) && (
+              {anyFilter && (
                 <button
                   onClick={resetFilters}
-                  style={{ background: "none", border: "1px solid var(--color-border)", color: "var(--color-text-muted)", borderRadius: 5, padding: "7px 12px", cursor: "pointer", fontFamily: "'Public Sans', sans-serif", fontSize: 12, alignSelf: "flex-end" }}
+                  style={{ background: "none", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)", borderRadius: 5, padding: "8px 12px", cursor: "pointer", fontFamily: "'Public Sans', sans-serif", fontSize: 13, alignSelf: "flex-end" }}
                 >
                   Clear filters
                 </button>
               )}
             </div>
 
-            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--color-surface-subtle)", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Minimum grade</span>
-              <GradeScale value={minStars} onChange={setMinStars} />
+            <div style={{ display: "flex", gap: "10px 16px", alignItems: "center", marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--color-surface-subtle)", flexWrap: "wrap" }}>
+              <GradeFilter value={minStars} onChange={setMinStars} />
 
-              <div style={{ width: 1, height: 16, background: "var(--color-border)", margin: "0 6px" }} />
-
-              <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Sort by</span>
-              <select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value)}
-                style={{ background: "transparent", border: "1px solid var(--color-border)", borderRadius: 5, color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif", fontSize: 12, outline: "none", cursor: "pointer", padding: "5px 8px" }}
-              >
-                <option value="score">Grade</option>
-                <option value="price">Price</option>
-                <option value="savings">Savings</option>
-                <option value="mileage">Mileage</option>
-                <option value="year">Year</option>
-              </select>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--color-text-muted)" }}>
+                Sort by
+                <select
+                  value={sortKey}
+                  onChange={(e) => setSortKey(e.target.value)}
+                  style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 5, color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif", fontSize: 13, outline: "none", cursor: "pointer", padding: "6px 8px" }}
+                >
+                  <option value="score">Best deal</option>
+                  <option value="savings">Most below market</option>
+                  <option value="price">Price</option>
+                  <option value="mileage">Mileage</option>
+                  <option value="year">Year</option>
+                </select>
+              </label>
               <button
                 onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                style={{ background: "none", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", borderRadius: 5, padding: "5px 9px", cursor: "pointer", fontSize: 12 }}
-                aria-label={sortDir === "asc" ? "Sort descending" : "Sort ascending"}
+                style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", borderRadius: 5, padding: "6px 10px", cursor: "pointer", fontSize: 13 }}
               >
-                {sortDir === "asc" ? "↑ Ascending" : "↓ Descending"}
+                {sortDir === "asc" ? "Lowest first" : "Highest first"}
               </button>
 
               <div style={{ flex: 1 }} />
-              <div style={{ fontSize: 12.5, color: "var(--color-text-secondary)" }}>{fmtN(filteredDeals.length)} results</div>
+              <div role="status" style={{ fontSize: 13.5, color: "var(--color-text-secondary)" }}>{loading.deals ? "Loading listings…" : `${fmtN(filteredDeals.length)} listings`}</div>
             </div>
           </div>
 
-          <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 8, boxShadow: "var(--shadow-panel)", overflow: "auto" }}>
-            <div style={{ display: "grid", gridTemplateColumns: ROW_COLUMNS, minWidth: 820, padding: "10px 20px", borderBottom: "1px solid var(--color-border)", background: "var(--color-surface-subtle)" }}>
-              {["Vehicle", "Price", "Est. value", "Savings", "Mileage", "State", "Grade"].map((h) => (
-                <div key={h} style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)" }}>{h}</div>
+          <p style={{ fontSize: 13, color: "var(--color-text-muted)", margin: "0 2px 12px", lineHeight: 1.5, maxWidth: 760 }}>
+            Each asking price is compared with our estimate of market value for that car. Fair price means within the estimate's usual margin of error; a great deal is at least three times that far below it.
+          </p>
+
+          <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 8, boxShadow: "var(--shadow-panel)", overflowX: "auto" }}>
+            <div className="deal-grid deal-head" style={{ padding: "10px 20px", borderBottom: "1px solid var(--color-border)", background: "var(--color-surface-subtle)" }}>
+              {["Vehicle", "Price", "Market value", "Compared with market", "Mileage", "State", "Grade"].map((h) => (
+                <div key={h} style={{ fontSize: 12.5, fontWeight: 600, color: "var(--color-text-secondary)" }}>{h}</div>
               ))}
             </div>
 
             {loading.deals ? (
-              <Spinner />
+              <div aria-hidden="true">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} style={{ margin: "14px 20px", height: 30, borderRadius: 4, background: "var(--color-surface-subtle)", animation: "pulse 1.4s infinite" }} />
+                ))}
+              </div>
             ) : filteredDeals.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-secondary)", fontSize: 13 }}>No listings match your filters</div>
+              <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-secondary)", fontSize: 14 }}>
+                <p>No listings match these filters.</p>
+                {anyFilter && (
+                  <button onClick={resetFilters} style={{ marginTop: 12, background: "var(--color-accent)", color: "var(--color-on-accent)", border: "none", borderRadius: 5, padding: "8px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                    Clear filters
+                  </button>
+                )}
+              </div>
             ) : (
-              displayedDeals.map((deal, i) => (
-                <div key={i}>
-                  <div
-                    className="deal-row"
-                    onClick={() => handleSelectDeal(deal)}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: ROW_COLUMNS,
-                      minWidth: 820,
-                      padding: "13px 20px",
-                      borderBottom: selectedDeal?.listing_id === deal.listing_id ? "none" : "1px solid var(--color-surface-subtle)",
-                      background: selectedDeal?.listing_id === deal.listing_id ? "var(--color-surface-subtle)" : "transparent",
-                      alignItems: "center",
-                    }}
-                  >
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        {deal.url ? (
-                          <a
-                            href={deal.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)", textDecoration: "none" }}
-                            onMouseEnter={(e) => (e.currentTarget.style.textDecoration = "underline")}
-                            onMouseLeave={(e) => (e.currentTarget.style.textDecoration = "none")}
-                          >
-                            {deal.year} {deal.make} {deal.model}
-                          </a>
-                        ) : (
-                          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-primary)" }}>
-                            {deal.year} {deal.make} {deal.model}
-                          </div>
-                        )}
-
-                        {deal.url && (
-                          <a
-                            href={deal.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            title="Open original listing"
-                            style={{
-                              fontSize: 11,
-                              color: "var(--color-text-muted)",
-                              textDecoration: "none",
-                              border: "1px solid var(--color-border)",
-                              padding: "1px 6px",
-                              borderRadius: 4,
-                            }}
-                          >
-                            ↗
-                          </a>
-                        )}
+              displayedDeals.map((deal) => {
+                const open = selectedDeal?.listing_id === deal.listing_id;
+                const vm = vsMarket(deal.savings);
+                const detailId = `deal-${deal.listing_id}`;
+                return (
+                  <div key={deal.listing_id}>
+                    <div
+                      className="deal-row deal-grid"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={open}
+                      aria-controls={open ? detailId : undefined}
+                      onClick={() => handleSelectDeal(deal)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSelectDeal(deal); }
+                      }}
+                      style={{
+                        padding: "13px 20px",
+                        borderBottom: open ? "none" : "1px solid var(--color-surface-subtle)",
+                        background: open ? "var(--color-surface-subtle)" : "transparent",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text-primary)" }}>
+                          {deal.year} {deal.make} {deal.model}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                          {[normalizeBodyType(deal.body_type), deal.trim].filter(Boolean).join(", ")}
+                        </div>
                       </div>
 
-                      <div style={{ fontSize: 11.5, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                        {normalizeBodyType(deal.body_type)} · {deal.trim}
-                      </div>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 14, fontWeight: 700, color: "var(--color-text-primary)" }}>{fmt$(deal.price)}</div>
+                      <div className="col-optional" style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, color: "var(--color-text-muted)" }}>{fmt$(deal.predicted_price)}</div>
+                      <div style={{ fontSize: 13, color: vm.color, fontWeight: 600 }}>{vm.text}</div>
+                      <div className="col-optional" style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{fmtN(deal.mileage)} mi</div>
+                      <div className="col-optional" style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{deal.location_state}</div>
+                      <DealBadge score={deal.deal_score} />
                     </div>
 
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700, color: "var(--color-text-primary)" }}>{fmt$(deal.price)}</div>
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "var(--color-text-muted)" }}>{fmt$(deal.predicted_price)}</div>
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: deal.savings >= 0 ? "var(--color-success)" : "var(--color-danger)", fontWeight: 600 }}>
-                      {deal.savings >= 0 ? "↓ " : "↑ "}
-                      {fmt$(Math.abs(deal.savings))}
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{fmtN(deal.mileage)} mi</div>
-                    <div style={{ fontSize: 12, color: "var(--color-text-subtle)" }}>{deal.location_state}</div>
-                    <DealBadge score={deal.deal_score} />
-                  </div>
-
-                  {selectedDeal?.listing_id === deal.listing_id && (
-                    <div className="panel-in" style={{ background: "var(--color-surface-subtle)", border: "1px solid var(--color-border)", borderTop: "2px solid var(--color-accent)", padding: "20px 24px", animation: "panelIn 0.15s ease" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
-                        <div>
-                          <div style={{ fontFamily: "'Overpass', sans-serif", fontWeight: 700, fontSize: 19, color: "var(--color-text-primary)" }}>
-                            {selectedDeal.year} {selectedDeal.make} {selectedDeal.model} <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>{selectedDeal.trim}</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 26, marginTop: 14, flexWrap: "wrap" }}>
-                            {[
-                              { label: "Listed price", value: fmt$(selectedDeal.price), color: "var(--color-text-primary)" },
-                              { label: "Est. value", value: fmt$(selectedDeal.predicted_price), color: "var(--color-text-muted)" },
-                              { label: "You save", value: fmt$(selectedDeal.savings), color: selectedDeal.savings >= 0 ? "var(--color-success)" : "var(--color-danger)" },
-                              { label: "Mileage", value: `${fmtN(selectedDeal.mileage)} mi`, color: "var(--color-text-subtle)" },
-                              { label: "Location", value: `${selectedDeal.location_city || ""} ${selectedDeal.location_state || ""}`.trim(), color: "var(--color-text-subtle)" },
-                              { label: "Accidents", value: selectedDeal.accident_count ?? 0, color: selectedDeal.accident_count > 0 ? "var(--color-danger)" : "var(--color-success)" },
-                            ].map(({ label, value, color }) => (
-                              <div key={label}>
-                                <div className="sticker-label" style={{ marginBottom: 4 }}>{label}</div>
-                                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 14.5, fontWeight: 700, color }}>{value}</div>
+                    {open && (
+                      <div id={detailId} className="panel-in" style={{ background: "var(--color-surface-subtle)", border: "1px solid var(--color-border)", borderTop: "2px solid var(--color-accent)", padding: "20px 24px", animation: "panelIn 0.15s ease" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
+                          <div>
+                            <h2 style={{ fontFamily: "'Overpass', sans-serif", fontWeight: 700, fontSize: 19, color: "var(--color-text-primary)" }}>
+                              {deal.year} {deal.make} {deal.model} <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>{deal.trim}</span>
+                            </h2>
+                            <div style={{ display: "flex", gap: 26, marginTop: 14, flexWrap: "wrap" }}>
+                              {[
+                                { label: "Asking price", value: fmt$(deal.price), color: "var(--color-text-primary)" },
+                                { label: "Market value", value: fmt$(deal.predicted_price), color: "var(--color-text-secondary)" },
+                                { label: "Compared with market", value: vm.text, color: vm.color },
+                                { label: "Mileage", value: `${fmtN(deal.mileage)} mi`, color: "var(--color-text-secondary)" },
+                                { label: "Location", value: [deal.location_city, deal.location_state].filter(Boolean).join(", "), color: "var(--color-text-secondary)" },
+                              ].map(({ label, value, color }) => (
+                                <div key={label}>
+                                  <div className="sticker-label" style={{ marginBottom: 4 }}>{label}</div>
+                                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 700, color }}>{value}</div>
+                                </div>
+                              ))}
+                              <div>
+                                <div className="sticker-label" style={{ marginBottom: 4 }}>Grade</div>
+                                <DealBadge score={deal.deal_score} width={52} height={8} />
                               </div>
-                            ))}
-                            <div>
-                              <div className="sticker-label" style={{ marginBottom: 4 }}>Deal grade</div>
-                              <DealBadge score={selectedDeal.deal_score} width={64} height={9} />
                             </div>
                           </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          {selectedDeal.url && !selectedDeal.url.includes("mock") && (
-                            <a
-                              href={selectedDeal.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ background: "var(--color-accent)", color: "var(--color-on-accent)", borderRadius: 5, padding: "7px 15px", fontSize: 12.5, fontWeight: 600, textDecoration: "none" }}
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            {deal.url && (
+                              <a
+                                href={deal.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ background: "var(--color-accent)", color: "var(--color-on-accent)", borderRadius: 5, padding: "8px 15px", fontSize: 13.5, fontWeight: 600, textDecoration: "none" }}
+                              >
+                                View on dealer site<span style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}> (opens in a new tab)</span>
+                              </a>
+                            )}
+                            <button
+                              onClick={() => setSelectedDeal(null)}
+                              style={{ background: "none", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)", borderRadius: 5, padding: "8px 13px", cursor: "pointer", fontSize: 13.5 }}
                             >
-                              View listing
-                            </a>
-                          )}
-                          <button
-                            onClick={() => setSelectedDeal(null)}
-                            style={{ background: "none", border: "1px solid var(--color-border)", color: "var(--color-text-secondary)", borderRadius: 5, padding: "7px 13px", cursor: "pointer", fontSize: 12.5 }}
-                          >
-                            Close
-                          </button>
+                              Close
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -1116,21 +1141,16 @@ export default function CarIntelDashboard() {
             <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
               <button
                 onClick={() => setVisibleCount((v) => v + 100)}
-                style={{ background: "var(--color-surface)", border: "1px solid var(--color-border-strong)", color: "var(--color-text-primary)", borderRadius: 6, padding: "10px 22px", fontFamily: "'Public Sans', sans-serif", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+                style={{ background: "var(--color-surface)", border: "1px solid var(--color-border-strong)", color: "var(--color-text-primary)", borderRadius: 6, padding: "10px 22px", fontFamily: "'Public Sans', sans-serif", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
               >
-                Show 100 more <span style={{ color: "var(--color-text-subtle)", fontWeight: 400 }}>({fmtN(filteredDeals.length - visibleCount)} remaining)</span>
+                Show 100 more <span style={{ color: "var(--color-text-subtle)", fontWeight: 400 }}>({fmtN(filteredDeals.length - visibleCount)} left)</span>
               </button>
             </div>
           )}
         </div>
       </main>
 
-      <footer style={{ position: "relative", zIndex: 1, borderTop: "1px solid var(--color-border)", padding: "16px 32px", display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 40 }}>
-        <div style={{ fontSize: 11.5, color: "var(--color-text-subtle)" }}>Car Intel — priced with a market-value model</div>
-        <div style={{ fontSize: 11.5, color: "var(--color-text-subtle)" }}>
-          {stats.last_updated ? `Updated ${new Date(stats.last_updated).toLocaleTimeString()}` : ""}
-        </div>
-      </footer>
+      <div style={{ marginTop: 40 }}>{footer}</div>
     </div>
   );
 }
