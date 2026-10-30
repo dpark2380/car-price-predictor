@@ -284,45 +284,19 @@ def listings():
         session.close()
 
 
-@app.route("/api/market-popular")
-def market_popular():
-    state = request.args.get("state", "CA")
-    limit = request.args.get("limit", 20, type=int)
-    try:
-        from scraper.marketcheck_enrichment import MarketCheckEnrichment
-        return jsonify(MarketCheckEnrichment().get_popular_cars(state=state, limit=limit))
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+_model_cache: dict = {}
 
 
-@app.route("/api/recent-listings")
-def recent_listings():
-    make  = request.args.get("make")
-    model = request.args.get("model")
-    rows  = request.args.get("rows", 50, type=int)
+def _cached_model(load_model):
+    """The saved model, reloaded only when the daily pipeline rewrites the file."""
+    from ml.pipeline import MODEL_PATH
     try:
-        from scraper.marketcheck_enrichment import MarketCheckEnrichment
-        results = MarketCheckEnrichment().get_recent_listings(rows=rows, make=make, model=model)
-        mapped = []
-        for r in results:
-            build = r.get("build", {}) or {}
-            mapped.append({
-                "id":      r.get("id"),
-                "vin":     r.get("vin"),
-                "year":    build.get("year") or r.get("year"),
-                "make":    build.get("make") or r.get("make"),
-                "model":   build.get("model") or r.get("model"),
-                "trim":    build.get("trim") or r.get("trim"),
-                "price":   r.get("price"),
-                "mileage": r.get("miles"),
-                "dom":     r.get("dom"),
-                "url":     r.get("vdp_url"),
-                "city":    (r.get("dealer") or {}).get("city"),
-                "state":   (r.get("dealer") or {}).get("state"),
-            })
-        return jsonify(mapped)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        mtime = os.path.getmtime(MODEL_PATH)
+    except OSError:
+        return None
+    if _model_cache.get("mtime") != mtime:
+        _model_cache.update(mtime=mtime, payload=load_model())
+    return _model_cache["payload"]
 
 
 @app.route("/api/predict")
@@ -344,7 +318,7 @@ def predict_price():
         from ml.pipeline import load as load_model, _build_features_raw, _apply_cohort_features, _cohort_features
         import numpy as np
 
-        payload = load_model()
+        payload = _cached_model(load_model)
         if payload is None:
             return jsonify({"error": "Model not available"}), 503
 
