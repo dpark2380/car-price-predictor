@@ -1,141 +1,70 @@
 /**
- * Car Intel theme system — CSS custom properties, class-toggled on <html>.
+ * Car Intel theme: tokens on :root (light) and html.theme-dark, toggled by
+ * ThemeToggle; public/theme-init.js restores the saved choice before paint.
  *
- * Palette: white + blue, restored by request. Structure still reads as an
- * instrument panel (gauges, fuel-gauge-style score bars, window-sticker
- * spec labels) — light mode is a white panel under daylight, dark mode a
- * navy panel with blue-backlit gauges (a real, common dash lighting color,
- * not just an inverted light mode).
- *
- * How it works
- * ------------
- * - `:root` defines the LIGHT theme. No class, no JavaScript required: a
- *   fresh page load renders correctly with CSS alone.
- * - `html.theme-dark` overrides the same tokens for dark mode.
- * - A pre-paint script in public/index.html restores a saved preference
- *   (localStorage "carintel-theme") before first paint, so there is no
- *   flash of the wrong theme. Without JS, the page renders light.
- *
- * Naming
- * ------
- * Tokens are semantic (what the color MEANS), never literal (what it looks
- * like). Components must only reference var(--color-*) — never raw hex.
- *
- * Contrast (WCAG 2.1 AA, 4.5:1 normal text / 3:1 large text & UI graphics)
- * ------------------------------------------------------------------------
- * Every *-text-grade and semantic-status token meets >= 4.5:1 against both
- * --color-bg and --color-surface in its theme (verified against the W3C
- * relative-luminance formula, not eyeballed):
- *
- *   light: text-primary 13.8 | text-secondary 7.0 | text-muted 5.3
- *          text-subtle 4.55  | accent 4.94 | success 5.0 | danger 4.8
- *          deal tiers 4.6–5.8 | on-accent (white text) 5.17
- *   dark:  text-primary 13.4 | text-secondary 9.4 | text-muted 5.7
- *          text-subtle 5.7   | accent 7.02 | success 8.4 | danger 5.3
- *          deal tiers 5.7–9.3 | on-accent (dark text) 7.02
+ * Direction: a car marketplace, not a dashboard. Cool grey page, white
+ * listing cards, one typeface, colour reserved for actions (petrol blue) and
+ * the five deal grades. Components reference tokens only, never raw hex.
+ * Text tokens meet WCAG AA (4.5:1) on --surface and --bg in both themes.
  */
 
 :root {
   color-scheme: light;
+  --bg: #f1f3f5;
+  --surface: #ffffff;
+  --surface-2: #f6f7f9;
+  --line: #dde1e6;
+  --line-strong: #c3c9d1;
+  --ink: #161a22;
+  --ink-2: #474f5c;
+  --ink-3: #5f6875;
+  --accent: #0b5394;
+  --accent-hover: #083f72;
+  --accent-soft: #e5edf6;
+  --on-accent: #ffffff;
+  --focus: #0b5394;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
 
-  /* Surfaces */
-  --color-bg: #f8fafc;
-  --color-bg-translucent: rgba(248, 250, 252, 0.93);
-  --color-surface: #ffffff;
-  --color-surface-subtle: #f1f5f9;
-  --color-grid: rgba(148, 163, 184, 0.09);
-  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 4px 24px rgba(15, 23, 42, 0.05);
-  --shadow-inset: inset 0 2px 5px rgba(15, 23, 42, 0.07);
+  /* Deal grades: text colour + tinted pill background */
+  --deal-great: #0b6e3a;  --deal-great-bg: #e1f2e8;
+  --deal-good: #2b7a2f;   --deal-good-bg: #e9f4e8;
+  --deal-fair: #474f5c;   --deal-fair-bg: #eceef1;
+  --deal-high: #9a4700;   --deal-high-bg: #fbeee1;
+  --deal-over: #b3261e;   --deal-over-bg: #fbe9e7;
 
-  /* Text */
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-muted: #64748b;
-  --color-text-subtle: #64748b;
-  --color-text-inverse: #f8fafc;
-
-  /* Borders */
-  --color-border: #e2e8f0;
-  --color-border-strong: #cbd5e1;
-
-  /* Accent (blue) */
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-subtle: rgba(37, 99, 235, 0.14);
-  --color-on-accent: #ffffff;
-
-  /* Info reuses the accent — one blue, not a second hue */
-  --color-info: #2563eb;
-
-  /* Status */
-  --color-success: #15803d;
-  --color-warning: #b45309;
-  --color-danger: #dc2626;
-  --color-danger-surface: #fef2f2;
-  --color-danger-strong: #991b1b;
-
-  /* Deal score tiers (used for the arc gauge and score bars) */
-  --color-deal-excellent: #15803d;
-  --color-deal-good: #4d7c0f;
-  --color-deal-high: #b45309;
-  --color-deal-neutral: #64748b;
-  --color-deal-bad: #dc2626;
-
-  /* Misc */
-  --color-loading: #2563eb;
+  --radius: 8px;
+  --shadow-card: 0 1px 2px rgba(22, 26, 34, 0.06);
 }
 
 html.theme-dark {
   color-scheme: dark;
+  --bg: #12151b;
+  --surface: #1b1f27;
+  --surface-2: #232833;
+  --line: #2f3542;
+  --line-strong: #444c5b;
+  --ink: #eceff4;
+  --ink-2: #bcc4cf;
+  --ink-3: #98a1ad;
+  --accent: #7fb0e0;
+  --accent-hover: #a3c7ea;
+  --accent-soft: #1f2d3d;
+  --on-accent: #0b1422;
+  --focus: #7fb0e0;
+  --danger: #f2948b;
+  --danger-soft: #3a1c1a;
 
-  /* Surfaces — navy panel */
-  --color-bg: #0f172a;
-  --color-bg-translucent: rgba(15, 23, 42, 0.93);
-  --color-surface: #1e293b;
-  --color-surface-subtle: #334155;
-  --color-grid: rgba(148, 163, 184, 0.07);
-  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 4px 24px rgba(0, 0, 0, 0.45);
-  --shadow-inset: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+  --deal-great: #6fd39b;  --deal-great-bg: #173525;
+  --deal-good: #9bd58a;   --deal-good-bg: #1e3320;
+  --deal-fair: #bcc4cf;   --deal-fair-bg: #262b35;
+  --deal-high: #f3b673;   --deal-high-bg: #3a2817;
+  --deal-over: #f2948b;   --deal-over-bg: #3a1c1a;
 
-  /* Text */
-  --color-text-primary: #f1f5f9;
-  --color-text-secondary: #cbd5e1;
-  --color-text-muted: #94a3b8;
-  --color-text-subtle: #94a3b8;
-  --color-text-inverse: #0f172a;
-
-  /* Borders */
-  --color-border: #334155;
-  --color-border-strong: #475569;
-
-  /* Accent (blue-backlit gauge) */
-  --color-accent: #60a5fa;
-  --color-accent-hover: #3b82f6;
-  --color-accent-subtle: rgba(96, 165, 250, 0.2);
-  --color-on-accent: #0f172a;
-
-  /* Info reuses the accent */
-  --color-info: #60a5fa;
-
-  /* Status */
-  --color-success: #4ade80;
-  --color-warning: #fbbf24;
-  --color-danger: #f87171;
-  --color-danger-surface: #450a0a;
-  --color-danger-strong: #fca5a5;
-
-  /* Deal score tiers */
-  --color-deal-excellent: #4ade80;
-  --color-deal-good: #a3e635;
-  --color-deal-high: #fbbf24;
-  --color-deal-neutral: #94a3b8;
-  --color-deal-bad: #f87171;
-
-  /* Misc */
-  --color-loading: #60a5fa;
+  --shadow-card: none;
 }
 
 body {
-  background: var(--color-bg);
-  color: var(--color-text-primary);
+  background: var(--bg);
+  color: var(--ink);
 }
