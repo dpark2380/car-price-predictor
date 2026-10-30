@@ -6,12 +6,10 @@
 # Pass the bundle only on the first run; re-runs without it reuse the
 # restored state (it refuses to overwrite an existing car_intel.db).
 #
-# Restores the AirDropped state bundle (if given), builds the Python venv and
-# the dashboard, runs the tests, and renders the launchd plists into
-# deploy/macmini/out/. Then run:  sudo ./deploy/macmini/install.sh
-#
-# API_URL overrides the URL the dashboard calls (default: this Mac's
-# .local name, port 5001). Rebuild with it if you add Tailscale or a tunnel.
+# Restores the AirDropped state bundle (if given), builds the Python venv,
+# runs the tests, and renders the launchd plists into deploy/macmini/out/.
+# Then run:  sudo ./deploy/macmini/install.sh
+# The dashboard is built and hosted by Cloudflare Pages, not on this Mac.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$REPO/deploy/macmini"
@@ -24,8 +22,8 @@ case "$REPO" in
     exit 1 ;;
 esac
 
-for tool in python3.14 npm sqlite3; do
-  command -v "$tool" >/dev/null || { echo "Missing $tool (brew install python@3.14 node libomp)" >&2; exit 1; }
+for tool in python3.14 sqlite3; do
+  command -v "$tool" >/dev/null || { echo "Missing $tool (brew install python@3.14 libomp)" >&2; exit 1; }
 done
 # XGBoost's macOS build links the OpenMP runtime; without it the import fails.
 brew list libomp >/dev/null 2>&1 || { echo "Missing libomp, which XGBoost needs: brew install libomp" >&2; exit 1; }
@@ -53,14 +51,9 @@ mkdir -p logs
 venv/bin/pip install --quiet -r requirements.txt
 PYTHONPATH=. venv/bin/python -W ignore tests/test_eval.py
 
-# ── 3. Dashboard ─────────────────────────────────────────────────────────────
-API_URL="${API_URL:-http://$(scutil --get LocalHostName).local:5001/api}"
-(cd frontend && npm ci --no-audit --no-fund --loglevel=error && REACT_APP_API_URL="$API_URL" npm run build >/dev/null)
-echo "Dashboard built against $API_URL"
-
-# ── 4. launchd plists ────────────────────────────────────────────────────────
+# ── 3. launchd plists ────────────────────────────────────────────────────────
 mkdir -p "$HERE/out"
-for name in pipeline api web; do
+for name in pipeline api; do
   sed -e "s|__REPO__|$REPO|g" -e "s|__USER__|$(id -un)|g" \
     "$HERE/com.carintel.$name.plist" > "$HERE/out/com.carintel.$name.plist"
   plutil -lint -s "$HERE/out/com.carintel.$name.plist"

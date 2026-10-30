@@ -8,7 +8,6 @@ LaunchDaemons, so they survive reboots without anyone logging in.
 |---|---|---|
 | Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` every 86,400 s (daily) |
 | API | `com.carintel.api` | gunicorn, 1 worker x 4 threads, port 5001, restarted if it dies |
-| Dashboard | `com.carintel.web` | static `frontend/build` on port 3000 |
 
 ## Cutover
 
@@ -29,24 +28,22 @@ Marketcheck key (`.env`), so don't upload it anywhere else.
 **On the Mac mini**
 
 ```bash
-brew install python@3.14 node libomp     # libomp: XGBoost needs it on macOS
+brew install python@3.14 libomp          # libomp: XGBoost needs it on macOS
 git clone git@github.com:dpark2380/Car-Price-Predictor.git ~/car-intel   # not under ~/Documents
 cd ~/car-intel
 ./deploy/macmini/setup.sh ~/Downloads/car-intel-state-*     # bundle path only on the first run
 sudo ./deploy/macmini/install.sh
 ```
 
-`setup.sh` verifies the bundle's checksums, restores it, builds the venv and
-the dashboard, runs `tests/test_eval.py`, and renders the plists into
+`setup.sh` verifies the bundle's checksums, restores it, builds the venv,
+runs `tests/test_eval.py`, and renders the plists into
 `deploy/macmini/out/`. `install.sh` loads the daemons, sets the Mac to never
 sleep and to restart after a power failure, and checks that the API and
 dashboard answer.
 
 The API listens on `127.0.0.1:5001` only, so the Cloudflare Tunnel (below) is
-the one way in from other machines. The local dashboard on `:3000` calls the
-API at `<mini-name>.local:5001`, which that bind blocks, so use the public
-dashboard instead; binding gunicorn to `0.0.0.0:5001` in
-`com.carintel.api.plist` brings the LAN version back.
+the one way in from other machines, and the dashboard lives on Cloudflare
+Pages. `install.sh` removes the old LAN dashboard daemon (`com.carintel.web`).
 
 ## Public site
 

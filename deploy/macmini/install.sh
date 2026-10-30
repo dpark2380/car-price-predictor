@@ -3,7 +3,7 @@
 #
 #   sudo ./deploy/macmini/install.sh
 #
-# Installs the three LaunchDaemons (pipeline daily, API, dashboard),
+# Installs the two LaunchDaemons (pipeline daily, API),
 # stops the Mac from sleeping, and turns on restart after power failure.
 # Re-running is safe: each daemon is unloaded and reloaded.
 set -euo pipefail
@@ -11,7 +11,14 @@ set -euo pipefail
 OUT="$(cd "$(dirname "$0")" && pwd)/out"
 [ -f "$OUT/com.carintel.pipeline.plist" ] || { echo "Run setup.sh first" >&2; exit 1; }
 
-for name in pipeline api web; do
+# The LAN dashboard daemon was retired for Cloudflare Pages; remove it if present.
+if [ -f /Library/LaunchDaemons/com.carintel.web.plist ]; then
+  launchctl bootout system/com.carintel.web 2>/dev/null || true
+  rm -f /Library/LaunchDaemons/com.carintel.web.plist
+  echo "removed com.carintel.web"
+fi
+
+for name in pipeline api; do
   label="com.carintel.$name"
   dest="/Library/LaunchDaemons/$label.plist"
   launchctl bootout "system/$label" 2>/dev/null || true
@@ -34,7 +41,6 @@ fi
 
 sleep 5
 curl -fsS -o /dev/null http://localhost:5001/api/stats && echo "API OK:       http://localhost:5001/api/stats" || echo "API not answering yet: see logs/api.log" >&2
-curl -fsS -o /dev/null http://localhost:3000/ && echo "Dashboard OK: http://localhost:3000" || echo "Dashboard not answering yet: see logs/web.log" >&2
 echo
 echo "The pipeline runs now (RunAtLoad), then daily. To run it again (calls Marketcheck):"
 echo "  sudo launchctl kickstart system/com.carintel.pipeline"

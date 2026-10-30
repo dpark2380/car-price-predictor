@@ -81,7 +81,7 @@ The pipeline, API and dashboard run unattended on an always-on Mac mini as three
 |---|---|---|
 | Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and every 86,400 s (daily): scrape → data validation → train → score → popularity snapshot |
 | API | `com.carintel.api` | `api.py` under gunicorn on port 5001, restarted if it exits |
-| Dashboard | `com.carintel.web` | the built React app on port 3000 |
+| Dashboard | Cloudflare Pages | https://cars.danielpark.fyi, rebuilt on every push to `main` |
 
 Each run makes up to 15 Marketcheck calls (5 each for cars, pickups and SUVs, around one of 15 rotating western-US zip codes), about 450 a month. The free plan stops at 500, and so does the scraper's monthly budget (`MARKETCHECK_MONTHLY_BUDGET`); a run that reaches it carries on with the data it has. On the last day of the month (New York time) the run repeats the scrape until the budget is spent, so calls the daily runs left unused (~50 a month, more after downtime) aren't wasted. A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. The database, model and live logs stay on the machine and are not committed.
 
