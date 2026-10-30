@@ -53,13 +53,17 @@ function CarOutline() {
   );
 }
 
-function Photo({ src, alt }) {
+export function Photo({ src, alt }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) return <CarOutline />;
   return <img src={src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
-export function ListingCard({ deal }) {
+// Days since our scraper last saw the ad live (0 = in the latest run).
+export const daysSinceSeen = (deal) =>
+  deal.last_seen ? Math.max(0, Math.floor((Date.now() - new Date(`${deal.last_seen}T00:00:00Z`)) / 86400000)) : null;
+
+export function ListingCard({ deal, href, onOpen }) {
   const name = `${deal.year} ${deal.make} ${deal.model}`;
   const vm = vsMarket(deal.savings);
   const sub = [deal.trim, normalizeBodyType(deal.body_type)].filter((v) => v && v !== "Unknown").join(", ");
@@ -72,14 +76,16 @@ export function ListingCard({ deal }) {
       </div>
       <div className="card-body">
         <h3 className="card-title">
-          {deal.url ? (
-            <a href={deal.url} target="_blank" rel="noopener noreferrer">
-              {name}
-              <span className="sr-only"> (opens the dealer's listing in a new tab)</span>
-            </a>
-          ) : (
-            name
-          )}
+          <a
+            href={href}
+            onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+              e.preventDefault();
+              onOpen(deal);
+            }}
+          >
+            {name}
+          </a>
         </h3>
         {sub && <div className="card-sub">{sub}</div>}
         <div className="card-price num">{fmt$(deal.price)}</div>

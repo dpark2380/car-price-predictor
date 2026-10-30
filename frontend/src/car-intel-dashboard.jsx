@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
-import { BrandMark, CardSkeleton, DealPill, ListingCard, ThemeToggle } from "./components/ui";
+import { BrandMark, CardSkeleton, DealPill, ListingCard, Photo, PriceBar, ThemeToggle, daysSinceSeen, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
@@ -50,17 +50,27 @@ const fmtUpdated = (iso) =>
 // ── URLs ─────────────────────────────────────────────────────────────────────
 // Each view has a path and its inputs live in the query string, so Back works
 // and a filtered search or an estimate can be bookmarked or shared. Cloudflare
-// Pages serves index.html for any path (the build has no 404.html).
-const PATHS = { home: "/", results: "/listings", estimator: "/price-check" };
+// Pages serves index.html for any path (the build has no 404.html). A single
+// listing lives at /listings/<listing_id>.
+const PATHS = { home: "/", results: "/listings", estimator: "/price-check", listing: "/listings/" };
+const listingPath = (id) => `/listings/${encodeURIComponent(id)}`;
 
 function fromUrl() {
   const q = new URLSearchParams(window.location.search);
-  const view = Object.keys(PATHS).find((v) => PATHS[v] === window.location.pathname) || "home";
+  const path = window.location.pathname;
+  if (path.startsWith("/listings/") && path.length > "/listings/".length) {
+    return { ...fromUrlParams(new URLSearchParams(), "listing"), view: "listing", listingId: decodeURIComponent(path.slice("/listings/".length)) };
+  }
+  return fromUrlParams(q, Object.keys(PATHS).find((v) => PATHS[v] === path) || "home");
+}
+
+function fromUrlParams(q, view) {
   const get = (k, d = "") => (view === "home" ? d : q.get(k) ?? d);
   const grade = Number(get("grade", "1"));
   const sort = `${get("sort", "score")}:${get("dir", "desc")}`;
   return {
     view,
+    listingId: "",
     make: get("make"), model: get("model"), trim: get("trim"),
     body: get("body"), size: get("size"),
     priceFrom: get("price_from"), priceTo: get("price_to"),
@@ -85,6 +95,7 @@ const PAGE_TITLES = {
   home: "Car Intel: used cars graded on price",
   results: "Used cars for sale, graded on price | Car Intel",
   estimator: "What is my car worth? Used car price check | Car Intel",
+  listing: "Used car listing | Car Intel",
 };
 
 function Field({ label, value, onChange, disabled, children }) {
@@ -100,7 +111,8 @@ function Field({ label, value, onChange, disabled, children }) {
 
 export default function CarIntelDashboard() {
   const initial = useMemo(fromUrl, []);
-  const [view, setView] = useState(initial.view); // "home" | "results" | "estimator"
+  const [view, setView] = useState(initial.view); // "home" | "results" | "estimator" | "listing"
+  const [listingId, setListingId] = useState(initial.listingId);
 
   const isRes = initial.view === "results";
   const [makeFilter, setMakeFilter] = useState(isRes ? initial.make : "");
@@ -187,7 +199,8 @@ export default function CarIntelDashboard() {
     return Object.entries(counts).filter(([b]) => b !== "Unknown").sort((a, b) => b[1] - a[1]);
   }, [deals]);
 
-  const topDeals = useMemo(() => (deals.length ? [...deals].filter((d) => d.deal_score != null).sort((a, b) => b.deal_score - a.deal_score) : preview), [deals, preview]);
+  // The API already leaves out stale ads (unseen for 3 weeks, or on sale 6+ months).
+  const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
 
   const [sortKey, sortDir] = sort.split(":");
   const filteredDeals = useMemo(() => {
@@ -231,15 +244,17 @@ export default function CarIntelDashboard() {
         ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== "desc" ? sortDir : "" })
         : view === "estimator"
         ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
+        : view === "listing"
+        ? listingPath(listingId)
         : toUrl(view, {});
     if (url === window.location.pathname + window.location.search) return;
-    if (PATHS[view] !== window.location.pathname) {
+    if (url.split("?")[0] !== window.location.pathname) {
       window.history.pushState(null, "", url);
       window.scrollTo(0, 0);
     } else {
       window.history.replaceState(null, "", url);
     }
-  }, [view, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
+  }, [view, listingId, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
 
   useEffect(() => {
     document.title = PAGE_TITLES[view];
@@ -250,6 +265,7 @@ export default function CarIntelDashboard() {
     const onPop = () => {
       const u = fromUrl();
       setView(u.view);
+      setListingId(u.listingId);
       if (u.view === "results") {
         setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
         setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
@@ -311,6 +327,12 @@ export default function CarIntelDashboard() {
       {children}
     </a>
   );
+
+  const openListing = (deal) => {
+    setListingId(deal.listing_id);
+    setView("listing");
+  };
+  const cardProps = (d) => ({ deal: d, href: listingPath(d.listing_id), onOpen: openListing });
 
   const showListings = (apply) => {
     resetFilters();
@@ -399,7 +421,7 @@ export default function CarIntelDashboard() {
             </div>
             <div className="card-grid four">
               {topDeals.length
-                ? topDeals.slice(0, 4).map((d) => <ListingCard key={d.listing_id} deal={d} />)
+                ? topDeals.slice(0, 4).map((d) => <ListingCard key={d.listing_id} {...cardProps(d)} />)
                 : [0, 1, 2, 3].map((i) => <CardSkeleton key={i} />)}
             </div>
           </section>
@@ -436,6 +458,93 @@ export default function CarIntelDashboard() {
               Each listing is compared with what our model expects similar cars to list for, allowing for how accurate that estimate usually is at that price. It can't see condition, options or service history, so always check the car itself.
             </p>
           </section>
+        </main>
+        {footer}
+      </>
+    );
+  }
+
+  // ── ONE LISTING ─────────────────────────────────────────────────────────────
+  if (view === "listing") {
+    const deal = deals.find((d) => d.listing_id === listingId) || preview.find((d) => d.listing_id === listingId);
+    const goBack = (e) => {
+      e.preventDefault();
+      // Came from inside the site: Back keeps the previous page's filters.
+      if (window.history.length > 1 && document.referrer.startsWith(window.location.origin)) window.history.back();
+      else setView("results");
+    };
+    if (!deal) {
+      return (
+        <>
+          {header}
+          <main className="wrap">
+            <a className="back-link" href={PATHS.results} onClick={goBack}>‹ Back to listings</a>
+            {loading.deals ? (
+              <div className="detail" aria-hidden="true"><div className="detail-photo skeleton" /><div className="panel skeleton" style={{ height: 320 }} /></div>
+            ) : (
+              <div className="empty" style={{ marginTop: 12 }}>
+                <p>This listing isn't in our current data. It may have sold or been taken down.</p>
+                <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={() => setView("results")}>Browse listings</button>
+              </div>
+            )}
+          </main>
+          {footer}
+        </>
+      );
+    }
+    const name = `${deal.year} ${deal.make} ${deal.model}`;
+    const vm = vsMarket(deal.savings);
+    const seen = daysSinceSeen(deal);
+    const similar = deals
+      .filter((d) => d.listing_id !== deal.listing_id && d.make === deal.make && d.model === deal.model && Math.abs(d.year - deal.year) <= 1)
+      .sort((a, b) => b.deal_score - a.deal_score)
+      .slice(0, 3);
+    return (
+      <>
+        {header}
+        <main className="wrap">
+          <a className="back-link" href={PATHS.results} onClick={goBack}>‹ Back to listings</a>
+          <div className="detail">
+            <div className="detail-photo">
+              <Photo src={deal.photo_url} alt={name} />
+            </div>
+            <section className="panel" aria-labelledby="listing-title">
+              <DealPill score={deal.deal_score} />
+              <h1 id="listing-title" style={{ marginTop: 10 }}>{name}</h1>
+              <div className="card-sub">{[deal.trim, normalizeBodyType(deal.body_type)].filter((v) => v && v !== "Unknown").join(", ")}</div>
+              <div className="card-price num">{fmt$(deal.price)}</div>
+              <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
+              <PriceBar score={deal.deal_score} />
+              <dl className="facts">
+                <dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd>
+                <dt>Mileage</dt><dd className="num">{fmtN(deal.mileage)} mi</dd>
+                <dt>Location</dt><dd>{[deal.location_city, deal.location_state].filter(Boolean).join(", ") || "—"}</dd>
+                <dt>On sale for</dt>
+                <dd className="num">{fmtN(deal.days_listed)} days</dd>
+                <dt>Last seen</dt>
+                <dd className={seen > 7 ? "caution" : ""}>{seen == null ? "—" : seen <= 1 ? "In the last day" : `${seen} days ago`}</dd>
+              </dl>
+              {deal.url && (
+                <div style={{ marginTop: 18 }}>
+                  <a className="btn btn-primary" href={deal.url} target="_blank" rel="noopener noreferrer">
+                    View on the dealer's website<span className="sr-only"> (opens in a new tab)</span>
+                  </a>
+                  <p className="dealer-note">
+                    Opens the dealer's own site, which can be slow. {seen > 7 ? `We last saw this ad ${seen} days ago, so it may have sold.` : "Check the car is still available before you visit."}
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
+
+          {similar.length > 0 && (
+            <section className="section" aria-labelledby="similar-title">
+              <div className="section-head"><h2 id="similar-title">Similar {deal.make} {deal.model}s</h2></div>
+              <div className="card-grid">
+                {similar.map((d) => <ListingCard key={d.listing_id} {...cardProps(d)} />)}
+              </div>
+            </section>
+          )}
         </main>
         {footer}
       </>
@@ -641,7 +750,7 @@ export default function CarIntelDashboard() {
               </div>
             ) : (
               <div className="card-grid">
-                {cards.map((d) => <ListingCard key={d.listing_id} deal={d} />)}
+                {cards.map((d) => <ListingCard key={d.listing_id} {...cardProps(d)} />)}
               </div>
             )}
 
