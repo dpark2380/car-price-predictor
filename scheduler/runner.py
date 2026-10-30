@@ -275,7 +275,28 @@ def main():
     except Exception:
         ping_healthcheck("/fail")
         raise
+    purge_cloudflare_cache()
     ping_healthcheck()
+
+
+def purge_cloudflare_cache() -> None:
+    """Clear Cloudflare's cache (it holds API responses for 2 hours) so the
+    public dashboard shows this run's data straight away. Needs
+    CLOUDFLARE_ZONE_ID and a CLOUDFLARE_API_TOKEN with Zone > Cache Purge;
+    unset skips it, and a failed purge only means up to 2 hours of stale data."""
+    zone, token = os.getenv("CLOUDFLARE_ZONE_ID", "").strip(), os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    if not zone or not token:
+        return
+    req = urllib.request.Request(
+        f"https://api.cloudflare.com/client/v4/zones/{zone}/purge_cache",
+        data=b'{"purge_everything": true}', method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        logger.info("Cloudflare cache purged")
+    except Exception as e:
+        logger.warning(f"Cloudflare cache purge failed: {e}")
 
 
 def ping_healthcheck(suffix: str = "") -> None:
