@@ -25,6 +25,17 @@ CORS(app, origins=[
 ])
 
 
+@app.after_request
+def _public_cors(resp):
+    """Cloudflare caches public API responses for every visitor and ignores
+    Vary: Origin, so one cached from a request without an Origin (a bot, curl)
+    would lack the header the dashboard needs. Requests through the public
+    hostname always get the dashboard's origin."""
+    if request.host == "cars-api.danielpark.fyi":
+        resp.headers["Access-Control-Allow-Origin"] = "https://cars.danielpark.fyi"
+    return resp
+
+
 # Once per process: init_db also syncs the SQL views (DROP/CREATE), and running
 # that per request let the dashboard's concurrent /deals + /stats calls race
 # ("view already exists" -> 500) on a DB that didn't have the views yet.
