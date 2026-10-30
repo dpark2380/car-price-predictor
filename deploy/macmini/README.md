@@ -73,7 +73,7 @@ tail -f logs/launchd_stderr.log                         # pipeline output
 After a code change, reload the API so it loads the new code. No sudo is
 needed: gunicorn runs as your user, and HUP makes it start fresh workers
 before stopping the old ones, so requests keep being served:
-`pkill -HUP -f "gunicorn.*api:app"`. Use
+`pkill -HUP -o -f "gunicorn.*api:app"` (`-o`: only the oldest process, the master; a worker sent HUP just exits). Use
 `sudo launchctl kickstart -k system/com.carintel.api` only if its plist
 changed. The pipeline picks up new code on its next run.
 
