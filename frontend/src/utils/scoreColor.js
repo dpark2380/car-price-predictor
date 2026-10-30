@@ -1,31 +1,41 @@
 /**
- * 0–100 scoring (internal):
- *   100 = best deal  →  tier 5
- *   50  = fair price →  tier 2–3
- *   0   = worst deal →  tier 1
+ * deal_score (0–100) from the API: 50 = priced at the market estimate. The
+ * distance from 50 is measured in units of the model's typical error at that
+ * price (ml/pipeline.py _deal_score_from_prices), so the bands are symmetric
+ * around fair and anything within about one typical error counts as fair.
+ *
+ *   tier 5  Great deal   >= 90   (discount >= 3x the model's typical error)
+ *   tier 4  Good deal    65–90
+ *   tier 3  Fair price   35–65
+ *   tier 2  High price   15–35
+ *   tier 1  Overpriced   < 15
  */
+const TIER_MIN = [0, 15, 35, 65, 90];
+
+export const DEAL_TIER_LABELS = ["Overpriced", "High price", "Fair price", "Good deal", "Great deal"];
+
 export function dealTier(score) {
   const s = score ?? 50;
-  if (s >= 90) return 5;
-  if (s >= 75) return 4;
-  if (s >= 60) return 3;
-  if (s >= 45) return 2;
-  return 1;
+  let tier = 1;
+  TIER_MIN.forEach((min, i) => {
+    if (s >= min) tier = i + 1;
+  });
+  return tier;
 }
-
-export const DEAL_TIER_LABELS = ["Overpriced", "Below fair", "Fair price", "Good deal", "Great deal"];
 
 export function dealTierLabel(score) {
   return DEAL_TIER_LABELS[dealTier(score) - 1];
 }
 
-// Returns theme-aware CSS custom properties (defined in theme.css) so deal
-// colors adapt to day/night mode and stay WCAG AA compliant in both.
+// Theme-aware CSS custom properties (theme.css), WCAG AA in both themes.
+const TIER_COLORS = [
+  "var(--color-deal-bad)",
+  "var(--color-deal-high)",
+  "var(--color-deal-neutral)",
+  "var(--color-deal-good)",
+  "var(--color-deal-excellent)",
+];
+
 export function getDealColor(score) {
-  const s = score ?? 50;
-  if (s >= 90) return "var(--color-deal-excellent)";
-  if (s >= 75) return "var(--color-deal-good)";
-  if (s >= 60) return "var(--color-deal-fair)";
-  if (s >= 45) return "var(--color-deal-poor)";
-  return "var(--color-deal-bad)";
+  return TIER_COLORS[dealTier(score) - 1];
 }

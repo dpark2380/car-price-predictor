@@ -77,8 +77,8 @@
   /* Deal score tiers (used for the arc gauge and score bars) */
   --color-deal-excellent: #15803d;
   --color-deal-good: #4d7c0f;
-  --color-deal-fair: #b45309;
-  --color-deal-poor: #64748b;
+  --color-deal-high: #b45309;
+  --color-deal-neutral: #64748b;
   --color-deal-bad: #dc2626;
 
   /* Misc */
@@ -127,8 +127,8 @@ html.theme-dark {
   /* Deal score tiers */
   --color-deal-excellent: #4ade80;
   --color-deal-good: #a3e635;
-  --color-deal-fair: #fbbf24;
-  --color-deal-poor: #94a3b8;
+  --color-deal-high: #fbbf24;
+  --color-deal-neutral: #94a3b8;
   --color-deal-bad: #f87171;
 
   /* Misc */
