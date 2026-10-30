@@ -392,7 +392,7 @@ def predict_price():
         return jsonify({"error": "mileage must be between 0 and 1,000,000"}), 400
 
     try:
-        from ml.pipeline import load as load_model, _build_features_raw, _apply_cohort_features, _cohort_features
+        from ml.pipeline import load as load_model, _build_features_raw, _apply_cohort_features, _cohort_features, _segment_error_for
         import numpy as np
 
         payload = _cached_model(load_model)
@@ -419,7 +419,18 @@ def predict_price():
         log_calibration = payload.get("log_calibration", 0.0)
         predicted = float(np.expm1(payload["model"].predict(X)[0] - log_calibration))
 
-        return jsonify({"predicted_price": round(predicted, 0)})
+        # The model's median abs % error for cars at this price with this many
+        # comparables (the deal score's yardstick): about half of similar
+        # listings fall within +/- this much of the estimate.
+        comparables = int(X["cohort_count"].iloc[0]) if "cohort_count" in X else None
+        err_pct = _segment_error_for(predicted, payload.get("segment_errors"), comparables)
+        return jsonify({
+            "predicted_price": round(predicted, 0),
+            "range_low":       round(predicted * (1 - err_pct / 100), -2),
+            "range_high":      round(predicted * (1 + err_pct / 100), -2),
+            "typical_error_pct": round(err_pct, 1),
+            "comparables":     comparables,
+        })
     except HTTPException:
         raise
     except Exception:
