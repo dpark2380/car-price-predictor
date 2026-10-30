@@ -57,6 +57,10 @@ re-run `install.sh`.
   `mac-mini` (route -> `http://localhost:5001`). `cloudflared` runs as the
   LaunchDaemon `com.cloudflare.cloudflared`; logs in
   `/Library/Logs/com.cloudflare.cloudflared.err.log`.
+- Cloudflare caches API responses for 2 hours (cache rule "Cache API") and
+  rate-limits `/api/*` to 30 requests per 10 s per IP. After each full run the
+  pipeline purges the cache when `.env` has `CLOUDFLARE_ZONE_ID` and a
+  `CLOUDFLARE_API_TOKEN` scoped to Zone > Cache Purge on danielpark.fyi.
 - Browsers may call the API only from the origins listed in `api.py`
   (`CORS(...)`); add one there if the dashboard moves.
 

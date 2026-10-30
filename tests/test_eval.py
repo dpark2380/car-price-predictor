@@ -162,6 +162,29 @@ def test_month_end_topup():
         runner.scrape_job, runner.month_total, runner.MONTHLY_CALL_BUDGET = old
 
 
+def test_purge_cloudflare_cache():
+    import os, urllib.request
+    from scheduler import runner
+    sent, old = [], urllib.request.urlopen
+    try:
+        urllib.request.urlopen = lambda req, timeout: sent.append(req)
+        os.environ.pop("CLOUDFLARE_ZONE_ID", None)
+        runner.purge_cloudflare_cache()          # unset: nothing sent
+        assert sent == []
+        os.environ.update(CLOUDFLARE_ZONE_ID="z1", CLOUDFLARE_API_TOKEN="t1")
+        runner.purge_cloudflare_cache()
+        req = sent[0]
+        assert req.full_url.endswith("/zones/z1/purge_cache") and req.get_method() == "POST"
+        assert req.get_header("Authorization") == "Bearer t1" and b"purge_everything" in req.data
+        def boom(req, timeout): raise OSError("down")
+        urllib.request.urlopen = boom
+        runner.purge_cloudflare_cache()          # failure must not raise
+    finally:
+        urllib.request.urlopen = old
+        for k in ("CLOUDFLARE_ZONE_ID", "CLOUDFLARE_API_TOKEN"):
+            os.environ.pop(k, None)
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -172,4 +195,5 @@ if __name__ == "__main__":
     test_price_routed_picks_model_by_cheap_prediction()
     test_monthly_call_budget()
     test_month_end_topup()
+    test_purge_cloudflare_cache()
     print("ok")
