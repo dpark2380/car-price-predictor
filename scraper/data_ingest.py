@@ -235,6 +235,11 @@ def _save_page_cursor(page: int, path: Path | None = None) -> None:
     p.write_text(json.dumps({"page": int(page)}))
 
 
+def _redact(e: Exception) -> str:
+    """requests puts the full URL, api_key included, in its error messages."""
+    return str(e).replace(API_KEY, "<api_key>") if API_KEY else str(e)
+
+
 class MarketCheckClient:
     def fetch_listings(
         self,
@@ -334,11 +339,11 @@ class MarketCheckClient:
                     logger.warning(f"  Marketcheck 422: start offset too high, resetting page cursor")
                     reset_to_zero = True
                 else:
-                    logger.warning(f"  Marketcheck call failed: {e}")
+                    logger.warning(f"  Marketcheck call failed: {_redact(e)}")
                     reset_to_zero = False
                 break
             except Exception as e:
-                logger.warning(f"  Marketcheck call failed: {e}")
+                logger.warning(f"  Marketcheck call failed: {_redact(e)}")
                 reset_to_zero = False
                 break
 

@@ -43,6 +43,7 @@ fi
 for f in car_intel.db models/price_predictor.joblib .env data/api_usage.json; do
   [ -e "$f" ] || { echo "Missing $f (pass the state bundle path)" >&2; exit 1; }
 done
+chmod 600 .env   # holds API keys and tokens: owner-only
 grep -Eq '^MARKETCHECK_API_KEY=.+' .env || { echo ".env has no MARKETCHECK_API_KEY" >&2; exit 1; }
 mkdir -p logs
 

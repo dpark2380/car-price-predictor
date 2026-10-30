@@ -3,13 +3,16 @@ api.py — Flask REST API for Car Intel dashboard
 Run: PYTHONPATH=. python3 api.py
 """
 
+import functools
 import math
 import os
 from datetime import datetime, timezone
 
 import pandas as pd
-from flask import Flask, jsonify, request
+from flask import Flask, abort, jsonify, request
 from flask_cors import CORS
+from loguru import logger
+from werkzeug.exceptions import HTTPException
 
 from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
@@ -23,6 +26,66 @@ CORS(app, origins=[
     r"http://[\w-]+\.local:3000",
     r"http://(localhost|127\.0\.0\.1):\d+",
 ])
+
+
+@app.errorhandler(HTTPException)
+def _http_error(e):
+    return jsonify({"error": e.description}), e.code
+
+
+@app.errorhandler(Exception)
+def _server_error(e):
+    # Log the detail; never send it (paths, SQL, library internals) to clients.
+    logger.exception(f"Unhandled error on {request.path}")
+    return jsonify({"error": "Internal error"}), 500
+
+
+@app.after_request
+def _nosniff(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+def _db_version() -> float:
+    """Changes whenever the pipeline writes the database."""
+    try:
+        return os.path.getmtime("car_intel.db")
+    except OSError:
+        return 0.0
+
+
+def db_cached(*params, maxsize=8):
+    """
+    Serve a GET endpoint's response from memory until the pipeline next writes
+    the database. Only the named query params form the key, so junk params
+    (Cloudflare cache-busting) can't force recomputation, and maxsize bounds
+    memory however many distinct values arrive.
+    """
+    def deco(view):
+        @functools.lru_cache(maxsize=maxsize)
+        def compute(version, key):
+            r = view()
+            r = r if isinstance(r, app.response_class) else app.make_response(r)
+            return r.get_data(), r.status_code, r.mimetype
+
+        @functools.wraps(view)
+        def wrapper():
+            key = tuple(request.args.get(p, "") for p in params)
+            body, status, mimetype = compute(_db_version(), key)
+            return app.response_class(body, status=status, mimetype=mimetype)
+        return wrapper
+    return deco
+
+
+def _arg_int(name, default, lo, hi):
+    """Integer query param clamped to [lo, hi]; non-numeric -> 400."""
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return max(lo, min(hi, int(raw)))
+    except ValueError:
+        abort(400, f"{name} must be a whole number")
 
 
 @app.after_request
@@ -80,10 +143,52 @@ def si(v):
         return None
 
 
+@functools.lru_cache(maxsize=1)
+def _deal_records(version):
+    """Every graded listing as API rows, best deal first. version: _db_version()."""
+    session = get_db()
+    try:
+        df = PredictionRepository(session).get_top_deals(limit=None, min_deal_score=0)
+        if df is None or df.empty:
+            return []
+
+        df["price"] = pd.to_numeric(df.get("price"), errors="coerce")
+        df["predicted_price"] = pd.to_numeric(df.get("predicted_price"), errors="coerce")
+        df["deal_score"] = pd.to_numeric(df.get("deal_score"), errors="coerce")
+        if "body_type" not in df.columns:
+            df["body_type"] = None
+        df["savings"] = (df["predicted_price"] - df["price"]).round(0)
+        df = df.sort_values("deal_score", ascending=False)
+
+        return [{
+            "listing_id":      row.get("listing_id"),
+            "url":             row.get("url"),
+            "year":            si(row.get("year")),
+            "make":            row.get("make"),
+            "model":           row.get("model"),
+            "trim":            ss(row.get("trim")),
+            "body_type":       ss(row.get("body_type")),
+            "price":           sf(row.get("price")),
+            "predicted_price": sf(row.get("predicted_price")),
+            "savings":         sf(row.get("savings")),
+            "deal_score":      sf(row.get("deal_score")),
+            "deal_label":      row.get("deal_label"),
+            "mileage":         si(row.get("mileage")),
+            "location_state":  row.get("location_state"),
+            "location_city":   row.get("location_city"),
+            "condition":       row.get("condition"),
+            "accident_count":  si(row.get("accident_count")) or 0,
+            "days_listed":     si(row.get("days_listed")) or 0,
+        } for _, row in df.iterrows()]
+    finally:
+        session.close()
+
+
 @app.route("/api/deals")
+@db_cached("limit", "min_score", "make", "model", "body", maxsize=4)
 def deals():
     """
-    Returns "deal finder" rows.
+    Returns "deal finder" rows, best first.
 
     deal_score is 0–100 where 100 is best deal.
     Query params:
@@ -92,84 +197,30 @@ def deals():
       - make/model: substring filters
       - body: body type filter (e.g. SUV, Sedan, Truck). Use "unknown" for NULLs.
     """
-    limit     = request.args.get("limit", type=int)
-    min_score = float(request.args.get("min_score", 0))
-    make      = request.args.get("make", "").strip().lower()
-    model_q   = request.args.get("model", "").strip().lower()
-    body_q    = request.args.get("body", "").strip().lower()  # NEW
+    limit     = _arg_int("limit", None, 1, 50_000)
+    min_score = request.args.get("min_score", 0.0, type=float)
+    make      = request.args.get("make", "").strip().lower()[:60]
+    model_q   = request.args.get("model", "").strip().lower()[:60]
+    body_q    = request.args.get("body", "").strip().lower()[:60]
 
-    session = get_db()
-    try:
-        repo = PredictionRepository(session)
-
-        # make/model/body filter in pandas below, so those need every graded
-        # listing; without them the limit can go straight to SQL.
-        filtered = bool(make or model_q or body_q)
-        df = repo.get_top_deals(limit=None if filtered else limit, min_deal_score=min_score)
-        if df is None or df.empty:
-            return jsonify([])
-
-        # Ensure numeric columns
-        df["price"] = pd.to_numeric(df.get("price"), errors="coerce")
-        df["predicted_price"] = pd.to_numeric(df.get("predicted_price"), errors="coerce")
-        df["deal_score"] = pd.to_numeric(df.get("deal_score"), errors="coerce")
-
-        # Ensure body_type exists as a column, even if missing
-        if "body_type" not in df.columns:
-            df["body_type"] = None
-
-        df["savings"] = (df["predicted_price"] - df["price"]).round(0)
-
-        if make:
-            df = df[df["make"].astype(str).str.lower().str.contains(make, na=False)]
-        if model_q:
-            df = df[df["model"].astype(str).str.lower().str.contains(model_q, na=False)]
-
-        # NEW: Body type filter
-        # - body=unknown filters for NULL/empty
-        # - otherwise substring match (case-insensitive)
-        if body_q:
-            bt = df["body_type"].astype(str).str.strip()
-            if body_q in {"unknown", "null", "(null)", "none"}:
-                df = df[df["body_type"].isna() | (bt == "") | (bt.str.lower() == "nan")]
-            else:
-                df = df[bt.str.lower().str.contains(body_q, na=False)]
-
-        # Best-first
-        df = df.sort_values("deal_score", ascending=False)
-        if limit:
-            df = df.head(limit)
-
-        records = []
-        for _, row in df.iterrows():
-            records.append({
-                "listing_id":      row.get("listing_id"),
-                "url":             row.get("url"),
-                "year":            si(row.get("year")),
-                "make":            row.get("make"),
-                "model":           row.get("model"),
-                "trim":            ss(row.get("trim")),
-                "body_type":       ss(row.get("body_type")),  # NEW
-                "price":           sf(row.get("price")),
-                "predicted_price": sf(row.get("predicted_price")),
-                "savings":         sf(row.get("savings")),
-                "deal_score":      sf(row.get("deal_score")),
-                "deal_label":      row.get("deal_label"),
-                "mileage":         si(row.get("mileage")),
-                "location_state":  row.get("location_state"),
-                "location_city":   row.get("location_city"),
-                "condition":       row.get("condition"),
-                "accident_count":  si(row.get("accident_count")) or 0,
-                "days_listed":     si(row.get("days_listed")) or 0,
-            })
-        return jsonify(records)
-    finally:
-        session.close()
+    rows = _deal_records(_db_version())
+    if min_score > 0:
+        rows = [r for r in rows if (r["deal_score"] or 0) >= min_score]
+    if make:
+        rows = [r for r in rows if make in str(r["make"] or "").lower()]
+    if model_q:
+        rows = [r for r in rows if model_q in str(r["model"] or "").lower()]
+    if body_q in {"unknown", "null", "(null)", "none"}:
+        rows = [r for r in rows if not (r["body_type"] or "").strip() or r["body_type"].lower() == "nan"]
+    elif body_q:
+        rows = [r for r in rows if body_q in (r["body_type"] or "").lower()]
+    return jsonify(rows[:limit] if limit else rows)
 
 
 @app.route("/api/popular")
+@db_cached("limit")
 def popular():
-    limit = int(request.args.get("limit", 20))
+    limit = _arg_int("limit", 20, 1, 200)
     session = get_db()
     try:
         repo = PopularityRepository(session)
@@ -197,6 +248,7 @@ def popular():
 
 
 @app.route("/api/stats")
+@db_cached()
 def stats():
     session = get_db()
     try:
@@ -214,13 +266,15 @@ def stats():
             "price_min":       sf(df["price"].min()) if "price" in df else None,
             "price_max":       sf(df["price"].max()) if "price" in df else None,
             "avg_mileage":     sf(df["mileage"].mean()) if "mileage" in df else 0,
-            "last_updated":    datetime.now(timezone.utc).isoformat()
+            # When the pipeline last wrote the data, not when this was served.
+            "last_updated":    datetime.fromtimestamp(_db_version(), timezone.utc).isoformat()
         })
     finally:
         session.close()
 
 
 @app.route("/api/trends")
+@db_cached()
 def trends():
     session = get_db()
     try:
@@ -256,6 +310,7 @@ def trends():
 
 
 @app.route("/api/listings")
+@db_cached()
 def listings():
     """
     Data for PRICE vs MILEAGE scatter.
@@ -324,13 +379,17 @@ def predict_price():
     Required: make, model, year, mileage
     Optional: accident_count, owner_count, state
     """
-    make       = request.args.get("make", "").strip()
-    model_name = request.args.get("model", "").strip()
+    make       = request.args.get("make", "").strip()[:60]
+    model_name = request.args.get("model", "").strip()[:60]
     year       = request.args.get("year", type=int)
     mileage    = request.args.get("mileage", type=int)
 
     if not make or not model_name or not year or mileage is None:
         return jsonify({"error": "make, model, year, and mileage are required"}), 400
+    if not 1980 <= year <= datetime.now().year + 1:
+        return jsonify({"error": f"year must be between 1980 and {datetime.now().year + 1}"}), 400
+    if not 0 <= mileage <= 1_000_000:
+        return jsonify({"error": "mileage must be between 0 and 1,000,000"}), 400
 
     try:
         from ml.pipeline import load as load_model, _build_features_raw, _apply_cohort_features, _cohort_features
@@ -345,10 +404,10 @@ def predict_price():
             "model":          model_name,
             "year":           year,
             "mileage":        mileage,
-            "trim":           request.args.get("trim", ""),
-            "accident_count": request.args.get("accident_count", 0, type=int),
-            "owner_count":    request.args.get("owner_count", 1, type=int),
-            "location_state": request.args.get("state", ""),
+            "trim":           request.args.get("trim", "")[:60],
+            "accident_count": _arg_int("accident_count", 0, 0, 20),
+            "owner_count":    _arg_int("owner_count", 1, 1, 20),
+            "location_state": request.args.get("state", "")[:2],
         }
 
         X = _build_features_raw(pd.DataFrame([row]))
@@ -361,11 +420,14 @@ def predict_price():
         predicted = float(np.expm1(payload["model"].predict(X)[0] - log_calibration))
 
         return jsonify({"predicted_price": round(predicted, 0)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("predict failed")
+        return jsonify({"error": "Couldn't estimate a price for that car"}), 500
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     print(f"Car Intel API running on port {port}")
-    app.run(host="0.0.0.0", debug=False, port=port)
+    app.run(host="127.0.0.1", debug=False, port=port)
