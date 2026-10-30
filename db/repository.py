@@ -57,7 +57,7 @@ class ListingRepository:
                     "price", "mileage", "days_listed",
                     "dealer_name", "dealer_rating",
                     "location_city", "location_state", "location_zip",
-                    "scrape_source",
+                    "scrape_source", "photo_url",
                 }
                 for k in mutable_fields:
                     v = data.get(k)

@@ -185,6 +185,15 @@ def test_purge_cloudflare_cache():
             os.environ.pop(k, None)
 
 
+def test_map_listing_keeps_first_https_photo():
+    from scraper.data_ingest import map_listing
+    raw = {"price": 20000, "miles": 1000, "vin": "X", "id": "1",
+           "build": {"year": 2020, "make": "Kia", "model": "K5"},
+           "media": {"photo_links": ["http://a/x.jpg", "https://cdn.example/1.jpg"]}}
+    assert map_listing(raw)["photo_url"] == "https://cdn.example/1.jpg"
+    assert map_listing({**raw, "media": None})["photo_url"] is None
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -196,4 +205,5 @@ if __name__ == "__main__":
     test_monthly_call_budget()
     test_month_end_topup()
     test_purge_cloudflare_cache()
+    test_map_listing_keeps_first_https_photo()
     print("ok")
