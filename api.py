@@ -15,7 +15,14 @@ from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 
 app = Flask(__name__)
-CORS(app)
+# Browsers may call the API only from the public dashboard, the Mac mini's LAN
+# dashboard and local dev. Not access control (curl ignores CORS): it stops
+# other websites from using this API from their visitors' browsers.
+CORS(app, origins=[
+    "https://cars.danielpark.fyi",
+    r"http://[\w-]+\.local:3000",
+    r"http://(localhost|127\.0\.0\.1):\d+",
+])
 
 
 # Once per process: init_db also syncs the SQL views (DROP/CREATE), and running
