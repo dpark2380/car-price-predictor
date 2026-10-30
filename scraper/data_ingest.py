@@ -210,6 +210,8 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "location_state": dealer.get("state"),
             "location_zip":   dealer.get("zip"),
             "days_listed":    raw.get("dom", 0) or 0,
+            "photo_url":      next((u for u in ((raw.get("media") or {}).get("photo_links") or [])
+                                    if isinstance(u, str) and u.startswith("https://")), None),
         }
     except Exception as e:
         logger.warning(f"map_listing failed: {e}")

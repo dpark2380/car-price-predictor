@@ -163,6 +163,7 @@ def _deal_records(version):
         return [{
             "listing_id":      row.get("listing_id"),
             "url":             row.get("url"),
+            "photo_url":       ss(row.get("photo_url")),
             "year":            si(row.get("year")),
             "make":            row.get("make"),
             "model":           row.get("model"),

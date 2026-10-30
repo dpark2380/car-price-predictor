@@ -37,6 +37,7 @@ class CarListing(Base):
     last_seen      = Column(DateTime, default=datetime.utcnow)
     days_listed    = Column(Integer, default=0)
     is_active      = Column(Integer, default=1)
+    photo_url      = Column(Text)   # first listing photo (https), shown on the dashboard
     __table_args__ = (
         Index("ix_make_model", "make", "model"),
         Index("ix_active", "is_active"),
@@ -112,6 +113,17 @@ VIEWS = {
 }
 
 
+def _add_missing_columns(engine) -> None:
+    """create_all never alters existing tables: add columns introduced later.
+    ponytail: additive nullable columns only; anything else needs a real migration."""
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            have = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table.name})"))}
+            for col in table.columns:
+                if have and col.name not in have:
+                    conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"))
+
+
 def _sync_views(engine) -> None:
     """Create views, recreating any whose definition changed (e.g. env tweak)."""
     with engine.begin() as conn:
@@ -127,6 +139,7 @@ def _sync_views(engine) -> None:
 def init_db(db_url: str = DB_PATH):
     engine = create_engine(db_url, echo=False)
     Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
     _sync_views(engine)
     return engine
 
