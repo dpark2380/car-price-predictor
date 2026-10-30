@@ -31,7 +31,7 @@ sqlite3 -readonly car_intel.db ".backup '$OUT/car_intel.db'"
 [ "$(sqlite3 "$OUT/car_intel.db" 'pragma integrity_check')" = "ok" ] || { echo "DB copy failed integrity check" >&2; exit 1; }
 
 cp -p models/price_predictor.joblib "$OUT/models/"
-cp -p .env "$OUT/.env"
+cp -p .env "$OUT/.env" && chmod 600 "$OUT/.env"
 cp -Rp data "$OUT/data"
 [ -d logs ] && cp -Rp logs "$OUT/logs"
 

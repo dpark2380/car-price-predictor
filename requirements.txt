@@ -11,3 +11,4 @@ joblib==1.6.0
 requests==2.34.2
 python-dotenv==1.2.3
 loguru==0.7.3
+certifi>=2026.10.18  # GHSA-6q48-6c7w-9gw2: drops compromised emSign CA intermediates
