@@ -207,18 +207,54 @@ function vsMarket(savings) {
 const fmtUpdated = (iso) =>
   new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-export default function CarIntelDashboard() {
-  const [view, setView] = useState("home"); // "home" | "results" | "estimator"
+// ── URLs ─────────────────────────────────────────────────────────────────────
+// Each view has a path and its inputs live in the query string, so Back works
+// and a filtered search or an estimate can be bookmarked or shared. Cloudflare
+// Pages serves index.html for any path (the build has no 404.html).
+const PATHS = { home: "/", results: "/listings", estimator: "/price-check" };
 
-  const [makeFilter, setMakeFilter] = useState("");
-  const [modelFilter, setModelFilter] = useState("");
-  const [sizeFilter, setSizeFilter] = useState("");
-  const [bodyFilter, setBodyFilter] = useState("");
-  const [minYear, setMinYear] = useState("");
-  const [maxYear, setMaxYear] = useState("");
-  const [minMileage, setMinMileage] = useState("");
-  const [maxMileage, setMaxMileage] = useState("");
-  const [minStars, setMinStars] = useState(1);
+function fromUrl() {
+  const q = new URLSearchParams(window.location.search);
+  const view = Object.keys(PATHS).find((v) => PATHS[v] === window.location.pathname) || "home";
+  const get = (k, d = "") => (view === "home" ? d : q.get(k) ?? d);
+  const grade = Number(get("grade", "1"));
+  return {
+    view,
+    make: get("make"), model: get("model"), trim: get("trim"),
+    body: get("body"), size: get("size"),
+    yearFrom: get("year_from"), yearTo: get("year_to"),
+    milesFrom: get("miles_from"), milesTo: get("miles_to"),
+    grade: [1, 3, 4, 5].includes(grade) ? grade : 1,
+    sort: ["score", "savings", "price", "mileage", "year"].includes(get("sort")) ? get("sort") : "score",
+    dir: get("dir") === "asc" ? "asc" : "desc",
+    year: get("year"), mileage: get("mileage"),
+  };
+}
+
+function toUrl(view, params) {
+  const q = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== "" && v != null) q.set(k, v);
+  });
+  const qs = q.toString();
+  return PATHS[view] + (qs ? `?${qs}` : "");
+}
+
+const PAGE_TITLES = { home: "Car Intel: is this used car priced fairly?", results: "Used car listings graded by price | Car Intel", estimator: "Used car price check | Car Intel" };
+
+export default function CarIntelDashboard() {
+  const initial = useMemo(fromUrl, []);
+  const [view, setView] = useState(initial.view); // "home" | "results" | "estimator"
+
+  const [makeFilter, setMakeFilter] = useState(initial.view === "results" ? initial.make : "");
+  const [modelFilter, setModelFilter] = useState(initial.view === "results" ? initial.model : "");
+  const [sizeFilter, setSizeFilter] = useState(initial.size);
+  const [bodyFilter, setBodyFilter] = useState(initial.body);
+  const [minYear, setMinYear] = useState(initial.yearFrom);
+  const [maxYear, setMaxYear] = useState(initial.yearTo);
+  const [minMileage, setMinMileage] = useState(initial.milesFrom);
+  const [maxMileage, setMaxMileage] = useState(initial.milesTo);
+  const [minStars, setMinStars] = useState(initial.grade);
 
   const [selectedDeal, setSelectedDeal] = useState(null);
   const [tickerIdx, setTickerIdx] = useState(0);
@@ -228,15 +264,17 @@ export default function CarIntelDashboard() {
   const [loading, setLoading] = useState({ deals: true, stats: true });
   const [apiError, setApiError] = useState(false);
 
-  const [sortKey, setSortKey] = useState("score"); // score | price | savings | mileage
-  const [sortDir, setSortDir] = useState("desc"); // asc | desc
+  const [sortKey, setSortKey] = useState(initial.sort); // score | savings | price | mileage | year
+  const [sortDir, setSortDir] = useState(initial.dir); // asc | desc
   const [visibleCount, setVisibleCount] = useState(100); // rendered rows — see perf note below
 
-  const [estMake, setEstMake] = useState("");
-  const [estModel, setEstModel] = useState("");
-  const [estYear, setEstYear] = useState("");
-  const [estMileage, setEstMileage] = useState("");
-  const [estTrim, setEstTrim] = useState("");
+  const isEst = initial.view === "estimator";
+  const [estMake, setEstMake] = useState(isEst ? initial.make : "");
+  const [estModel, setEstModel] = useState(isEst ? initial.model : "");
+  const [estYear, setEstYear] = useState(isEst ? initial.year : "");
+  const [estMileage, setEstMileage] = useState(isEst ? initial.mileage : "");
+  const [estTrim, setEstTrim] = useState(isEst ? initial.trim : "");
+  const [preview, setPreview] = useState([]); // top deals, shown while the full list loads
   const [estResult, setEstResult] = useState(null);
   const [estLoading, setEstLoading] = useState(false);
   const [estError, setEstError] = useState(null);
@@ -258,6 +296,12 @@ export default function CarIntelDashboard() {
 
     // Listing URLs come from third-party data: only http(s) may reach an href.
     const safeUrls = (rows) => rows.map((d) => ({ ...d, url: /^https?:\/\//i.test(d.url || "") ? d.url : null }));
+    // The top 100 deals arrive in a fraction of the full list's time, so the
+    // first screen shows real listings while everything else downloads.
+    fetch(`${API}/deals?limit=100`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => setPreview(safeUrls(rows)))
+      .catch(() => {});
     load("deals", `${API}/deals?min_score=0`, (rows) => setDeals(safeUrls(rows)));
     load("stats", `${API}/stats`, setStats);
   }, []);
@@ -393,6 +437,79 @@ export default function CarIntelDashboard() {
   }, [minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
   const displayedDeals = useMemo(() => filteredDeals.slice(0, visibleCount), [filteredDeals, visibleCount]);
+
+  // Keep the address bar in step with the view and its inputs. A new view is
+  // a history entry (Back returns to it); filter changes replace the current
+  // entry so Back doesn't replay every dropdown change.
+  useEffect(() => {
+    const url =
+      view === "results"
+        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== "desc" ? sortDir : "" })
+        : view === "estimator"
+        ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
+        : toUrl(view, {});
+    const here = window.location.pathname + window.location.search;
+    if (url === here) return;
+    if (PATHS[view] !== window.location.pathname) {
+      window.history.pushState(null, "", url);
+      window.scrollTo(0, 0);
+    } else {
+      window.history.replaceState(null, "", url);
+    }
+  }, [view, makeFilter, modelFilter, bodyFilter, sizeFilter, minYear, maxYear, minMileage, maxMileage, minStars, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
+
+  useEffect(() => {
+    document.title = PAGE_TITLES[view];
+  }, [view]);
+
+  // Back/Forward: restore the view and inputs the URL describes.
+  useEffect(() => {
+    const onPop = () => {
+      const u = fromUrl();
+      setView(u.view);
+      setSelectedDeal(null);
+      if (u.view === "results") {
+        setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
+        setMinYear(u.yearFrom); setMaxYear(u.yearTo); setMinMileage(u.milesFrom); setMaxMileage(u.milesTo);
+        setMinStars(u.grade); setSortKey(u.sort); setSortDir(u.dir);
+      } else if (u.view === "estimator") {
+        setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const runEstimate = async () => {
+    if (!estMake || !estModel || !estYear || !estMileage) {
+      setEstError("Fill in make, model, year, and mileage to get an estimate.");
+      return;
+    }
+    setEstLoading(true);
+    setEstError(null);
+    setEstResult(null);
+    try {
+      const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, ...(estTrim && { trim: estTrim }) });
+      const res = await fetch(`${API}/predict?${params}`);
+      const data = await res.json().catch(() => ({}));
+      // The API's 400 messages are written for people ("year must be between …").
+      if (!res.ok || data.error) throw new Error(res.status === 400 && data.error ? data.error : "The estimate isn't available right now. Try again in a minute.");
+      setEstResult(data);
+    } catch (e) {
+      setEstError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : e.message);
+    } finally {
+      setEstLoading(false);
+    }
+  };
+
+
+  // A shared price-check link carries everything the estimate needs: run it.
+  useEffect(() => {
+    if (initial.view === "estimator" && initial.make && initial.model && initial.year && initial.mileage) runEstimate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
 
   const currentTicker = topTickerDeals[tickerIdx] || {};
   const isLoading = Object.values(loading).some(Boolean);
@@ -617,12 +734,12 @@ export default function CarIntelDashboard() {
 
             <section aria-labelledby="best-today" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 12, boxShadow: "var(--shadow-panel)", padding: "18px 0 8px" }}>
               <h2 id="best-today" style={{ fontFamily: "'Overpass', sans-serif", fontSize: 16, fontWeight: 700, padding: "0 20px 10px" }}>Best deals right now</h2>
-              {loading.deals ? (
+              {!topTickerDeals.length && !preview.length ? (
                 [0, 1, 2].map((i) => (
                   <div key={i} aria-hidden="true" style={{ margin: "10px 20px", height: 44, borderRadius: 4, background: "var(--color-surface-subtle)", animation: "pulse 1.4s infinite" }} />
                 ))
               ) : (
-                topTickerDeals.slice(0, 3).map((d) => {
+                (topTickerDeals.length ? topTickerDeals : preview).slice(0, 3).map((d) => {
                   const vm = vsMarket(d.savings);
                   return (
                     <button
@@ -748,28 +865,6 @@ export default function CarIntelDashboard() {
 
   // ── PRICE ESTIMATOR PAGE ─────────────────────────────────────────────────────
   if (view === "estimator") {
-    const runEstimate = async () => {
-      if (!estMake || !estModel || !estYear || !estMileage) {
-        setEstError("Fill in make, model, year, and mileage to get an estimate.");
-        return;
-      }
-      setEstLoading(true);
-      setEstError(null);
-      setEstResult(null);
-      try {
-        const params = new URLSearchParams({ make: estMake, model: estModel, year: estYear, mileage: estMileage, ...(estTrim && { trim: estTrim }) });
-        const res = await fetch(`${API}/predict?${params}`);
-        const data = await res.json().catch(() => ({}));
-        // The API's 400 messages are written for people ("year must be between …").
-        if (!res.ok || data.error) throw new Error(res.status === 400 && data.error ? data.error : "The estimate isn't available right now. Try again in a minute.");
-        setEstResult(data);
-      } catch (e) {
-        setEstError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : e.message);
-      } finally {
-        setEstLoading(false);
-      }
-    };
-
     const inputStyle = { background: "var(--color-surface)", border: "1px solid var(--color-border)", boxShadow: "var(--shadow-inset)", borderRadius: 5, padding: "10px 11px", fontFamily: "'Public Sans', sans-serif", fontSize: 13.5, color: "var(--color-text-primary)", width: "100%", outline: "none", boxSizing: "border-box" };
     const labelStyle = { fontFamily: "'Public Sans', sans-serif", fontSize: 13, color: "var(--color-text-muted)", display: "block", marginBottom: 4 };
     const maxYear = new Date().getFullYear() + 1;
@@ -854,11 +949,19 @@ export default function CarIntelDashboard() {
                   <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 40, color: "var(--color-accent)", marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
                     {fmt$(estResult.predicted_price)}
                   </div>
+                  {estResult.range_low != null && (
+                    <div style={{ fontSize: 15, color: "var(--color-text-primary)", marginTop: 6 }}>
+                      About half of similar cars are listed between <strong>{fmt$(estResult.range_low)}</strong> and <strong>{fmt$(estResult.range_high)}</strong>.
+                    </div>
+                  )}
                   <div style={{ fontSize: 14, color: "var(--color-text-secondary)", marginTop: 8 }}>
                     {estYear} {estMake.charAt(0).toUpperCase() + estMake.slice(1)} {estModel.charAt(0).toUpperCase() + estModel.slice(1)}{estTrim ? ` ${estTrim}` : ""}, {parseInt(estMileage).toLocaleString()} mi
                   </div>
                   <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 10, lineHeight: 1.5 }}>
-                    A typical asking price for this car right now. Condition, options and service history can move a real price either way.
+                    {estResult.comparables != null && estResult.comparables < 3
+                      ? "We've seen very few of this car recently, so treat this as a rough guide. "
+                      : ""}
+                    Condition, options and service history can move a real price either way.
                   </p>
                 </div>
               </div>
@@ -871,6 +974,9 @@ export default function CarIntelDashboard() {
 
   // ── RESULTS PAGE ─────────────────────────────────────────────────────────────
   const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minYear || maxYear || minMileage || maxMileage || minStars > 1;
+  // While the full list loads, the default view (best deals first, no
+  // filters) can already show the top-100 preview, which is the same rows.
+  const rows = !loading.deals ? displayedDeals : !anyFilter && sortKey === "score" && sortDir === "desc" ? preview : [];
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--color-bg)", color: "var(--color-text-primary)", fontFamily: "'Public Sans', sans-serif", position: "relative" }}>
@@ -1028,7 +1134,7 @@ export default function CarIntelDashboard() {
               ))}
             </div>
 
-            {loading.deals ? (
+            {loading.deals && !rows.length ? (
               <div aria-hidden="true">
                 {Array.from({ length: 8 }).map((_, i) => (
                   <div key={i} style={{ margin: "14px 20px", height: 30, borderRadius: 4, background: "var(--color-surface-subtle)", animation: "pulse 1.4s infinite" }} />
@@ -1044,7 +1150,7 @@ export default function CarIntelDashboard() {
                 )}
               </div>
             ) : (
-              displayedDeals.map((deal) => {
+              rows.map((deal) => {
                 const open = selectedDeal?.listing_id === deal.listing_id;
                 const vm = vsMarket(deal.savings);
                 const detailId = `deal-${deal.listing_id}`;
