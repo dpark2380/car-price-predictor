@@ -26,16 +26,3 @@ export function dealTier(score) {
 export function dealTierLabel(score) {
   return DEAL_TIER_LABELS[dealTier(score) - 1];
 }
-
-// Theme-aware CSS custom properties (theme.css), WCAG AA in both themes.
-const TIER_COLORS = [
-  "var(--color-deal-bad)",
-  "var(--color-deal-high)",
-  "var(--color-deal-neutral)",
-  "var(--color-deal-good)",
-  "var(--color-deal-excellent)",
-];
-
-export function getDealColor(score) {
-  return TIER_COLORS[dealTier(score) - 1];
-}
