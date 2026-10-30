@@ -70,9 +70,12 @@ sudo launchctl print system/com.carintel.pipeline | grep -E "state|runs|last exi
 tail -f logs/launchd_stderr.log                         # pipeline output
 ```
 
-After `git pull`, restart the API so it loads the new code:
-`sudo launchctl kickstart -k system/com.carintel.api`. The pipeline picks up
-new code on its next run.
+After a code change, reload the API so it loads the new code. No sudo is
+needed: gunicorn runs as your user, and HUP makes it start fresh workers
+before stopping the old ones, so requests keep being served:
+`pkill -HUP -f "gunicorn.*api:app"`. Use
+`sudo launchctl kickstart -k system/com.carintel.api` only if its plist
+changed. The pipeline picks up new code on its next run.
 
 ## Caveats
 
