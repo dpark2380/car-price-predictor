@@ -143,9 +143,17 @@ def si(v):
         return None
 
 
+# The public site shows live-looking ads only; stale ones stay in the DB for
+# training. Each zip comes round about every 15 days, so a live ad can go
+# that long unseen; ads on sale for months at a "deal" price were mostly
+# dead links, sold cars or problem cars.
+MAX_DAYS_SINCE_SEEN = 21
+MAX_DAYS_LISTED = 180
+
+
 @functools.lru_cache(maxsize=1)
 def _deal_records(version):
-    """Every graded listing as API rows, best deal first. version: _db_version()."""
+    """Every graded, non-stale listing as API rows, best deal first. version: _db_version()."""
     session = get_db()
     try:
         df = PredictionRepository(session).get_top_deals(limit=None, min_deal_score=0)
@@ -158,7 +166,10 @@ def _deal_records(version):
         if "body_type" not in df.columns:
             df["body_type"] = None
         df["savings"] = (df["predicted_price"] - df["price"]).round(0)
-        df = df.sort_values("deal_score", ascending=False)
+        seen = pd.to_datetime(df["last_seen"], errors="coerce")
+        fresh = (seen >= pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=MAX_DAYS_SINCE_SEEN)) \
+            & (pd.to_numeric(df["days_listed"], errors="coerce").fillna(0) <= MAX_DAYS_LISTED)
+        df = df[fresh].sort_values("deal_score", ascending=False)
 
         return [{
             "listing_id":      row.get("listing_id"),
@@ -180,6 +191,8 @@ def _deal_records(version):
             "condition":       row.get("condition"),
             "accident_count":  si(row.get("accident_count")) or 0,
             "days_listed":     si(row.get("days_listed")) or 0,
+            # Date our scraper last saw the ad live; older means it may have sold.
+            "last_seen":       str(row.get("last_seen"))[:10] if row.get("last_seen") is not None else None,
         } for _, row in df.iterrows()]
     finally:
         session.close()
@@ -260,7 +273,7 @@ def stats():
 
         return jsonify({
             "active_listings": int(repo.count_active()),
-            "graded_listings": PredictionRepository(session).count_graded(),
+            "graded_listings": len(_deal_records(_db_version())),  # what the site shows
             "makes":           int(df["make"].nunique()) if "make" in df else 0,
             "models":          int(df["model"].nunique()) if "model" in df else 0,
             "avg_price":       sf(df["price"].mean()) if "price" in df else None,
