@@ -19,6 +19,7 @@ from db.repository import ListingRepository, PredictionRepository, PopularityRep
 from db.validation import run_validation
 from scraper.api_usage import NY_TZ, month_total
 from scraper.data_ingest import DataIngestor, MONTHLY_CALL_BUDGET
+from scraper import dealer_sites
 from ml import pipeline
 from env_utils import env_int
 
@@ -215,6 +216,16 @@ def ml_train_job(repo: ListingRepository):
     logger.info("▶ ML train job complete")
 
 
+def dealer_check_job(repo: ListingRepository):
+    """Record which dealer websites are down, so the site can hide their ads."""
+    from db.models import CarListing
+    urls = repo.session.query(CarListing.url).filter(CarListing.is_active == 1).all()
+    hosts = {dealer_sites.host_of(u) for (u,) in urls} - {None}
+    down = dealer_sites.find_down(hosts)
+    dealer_sites.save_down(down, len(hosts))
+    logger.info(f"▶ Dealer sites checked: {len(down)} of {len(hosts)} unreachable")
+
+
 def run_all(engine):
     session = get_session(engine)
     repo = ListingRepository(session)
@@ -226,6 +237,10 @@ def run_all(engine):
         ml_train_job(repo)
         score_job(repo, pred)
         popularity_job(repo, pop)
+        try:
+            dealer_check_job(repo)
+        except Exception as e:  # never fail the run over a link check
+            logger.warning(f"Dealer site check failed: {e}")
     finally:
         session.close()
 
@@ -235,6 +250,7 @@ def main():
     parser.add_argument("--scrape-only", action="store_true")
     parser.add_argument("--train-only", action="store_true")
     parser.add_argument("--score-only", action="store_true")
+    parser.add_argument("--check-dealers", action="store_true")
     args = parser.parse_args()
 
     engine = init_db()
@@ -255,6 +271,14 @@ def main():
         try:
             repo = ListingRepository(session)
             ml_train_job(repo)
+        finally:
+            session.close()
+        return
+
+    if args.check_dealers:
+        session = get_session(engine)
+        try:
+            dealer_check_job(ListingRepository(session))
         finally:
             session.close()
         return

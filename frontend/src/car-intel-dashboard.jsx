@@ -529,9 +529,6 @@ export default function CarIntelDashboard() {
                   <a className="btn btn-primary" href={deal.url} target="_blank" rel="noopener noreferrer">
                     View on the dealer's website<span className="sr-only"> (opens in a new tab)</span>
                   </a>
-                  <p className="dealer-note">
-                    Opens the dealer's own site, which can be slow. {seen > 7 ? `We last saw this ad ${seen} days ago, so it may have sold.` : "Check the car is still available before you visit."}
-                  </p>
                 </div>
               )}
             </section>
