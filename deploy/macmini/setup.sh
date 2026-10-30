@@ -11,7 +11,7 @@
 # Then run:  sudo ./deploy/macmini/install.sh
 # The dashboard is built and hosted by Cloudflare Pages, not on this Mac.
 set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../.." && pwd -P)"  # -P: real path, so a ~/Documents symlink still works
 HERE="$REPO/deploy/macmini"
 cd "$REPO"
 
