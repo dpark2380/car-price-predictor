@@ -194,6 +194,8 @@ def test_map_listing_keeps_first_https_photo():
     assert map_listing({**raw, "media": None})["photo_url"] is None
     cached = {"photo_links": ["https://cdn.marketcheck.com/img.jpg?api_key=SECRET", "https://img.marketcheck.com/x.jpg"]}
     assert map_listing({**raw, "media": cached})["photo_url"] is None
+    stub = {"photo_links": ["https://dealer.example/img/vehicle-image-notavailable-320x240.jpg", "https://cdn.example/2.jpg"]}
+    assert map_listing({**raw, "media": stub})["photo_url"] == "https://cdn.example/2.jpg"
 
 
 if __name__ == "__main__":

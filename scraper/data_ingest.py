@@ -7,6 +7,7 @@ import time
 import random
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import requests
@@ -215,7 +216,8 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             # against the account, so never pass on a URL that mentions either.
             "photo_url":      next((u for u in ((raw.get("media") or {}).get("photo_links") or [])
                                     if isinstance(u, str) and u.startswith("https://")
-                                    and "api_key" not in u and "marketcheck" not in u.lower()), None),
+                                    and "api_key" not in u and "marketcheck" not in u.lower()
+                                    and not _PLACEHOLDER_PHOTO.search(u)), None),
         }
     except Exception as e:
         logger.warning(f"map_listing failed: {e}")
@@ -239,6 +241,10 @@ def _save_page_cursor(page: int, path: Path | None = None) -> None:
     p = path or PAGE_CURSOR_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"page": int(page)}))
+
+
+# Dealer sites' "no photo yet" images, e.g. vehicle-image-notavailable-320x240.jpg
+_PLACEHOLDER_PHOTO = re.compile(r"not-?available|no-?image|no-?photo|coming-?soon|placeholder", re.I)
 
 
 def _redact(e: Exception) -> str:
