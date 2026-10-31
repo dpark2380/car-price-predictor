@@ -210,6 +210,28 @@ def test_dealer_sites_round_trip_and_host():
     assert ds.host_of(None) is None and ds.host_of("not a url") is None
 
 
+def test_scrape_call_is_logged():
+    import json, tempfile
+    from pathlib import Path
+    from scraper import api_usage, data_ingest
+    class Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"num_found": 812, "listings": [{"id": "a1", "vin": "V1"}, {"id": "b2"}]}
+    tmp = Path(tempfile.mkdtemp())
+    saved = api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG, data_ingest.requests.get
+    try:
+        api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG = tmp / "usage.json", tmp / "calls.jsonl"
+        data_ingest.requests.get = lambda *a, **k: Resp()
+        data_ingest.MarketCheckClient().fetch_listings(rows_per_call=50, page_cursor_path=tmp / "p.json",
+                                                       zip_cursor_path=tmp / "z.json", car_type="used")
+        line = json.loads(data_ingest.SCRAPE_CALLS_LOG.read_text())
+        assert line["listing_ids"] == ["V1-a1", "b2"]        # same ids as car_listings.listing_id
+        assert line["num_found"] == 812 and line["start"] == 0 and line["car_type"] == "used"
+        assert "api_key" not in line
+    finally:
+        api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG, data_ingest.requests.get = saved
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -223,4 +245,5 @@ if __name__ == "__main__":
     test_purge_cloudflare_cache()
     test_map_listing_keeps_first_https_photo()
     test_dealer_sites_round_trip_and_host()
+    test_scrape_call_is_logged()
     print("ok")
