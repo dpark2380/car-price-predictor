@@ -7,6 +7,8 @@ numpy==2.5.3
 scikit-learn==1.9.1
 scipy==1.18.1
 xgboost==3.4.1
+catboost==1.2.10
+lightgbm==4.7.0
 joblib==1.6.0
 requests==2.34.2
 python-dotenv==1.2.3

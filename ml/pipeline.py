@@ -10,10 +10,12 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor, VotingRegressor
 from sklearn.inspection import permutation_importance
-from sklearn.base import BaseEstimator, RegressorMixin, clone
+from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin, clone
 
 
 from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor, early_stopping
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -160,6 +162,31 @@ class PriceRouted(BaseEstimator, RegressorMixin):
     def predict(self, X):
         cheap = self.cheap_.predict(X)
         return np.where(cheap < np.log1p(self.cut), cheap, self.rest_.predict(X))
+
+
+class NativeCats(BaseEstimator, TransformerMixin):
+    """
+    Selects columns for CatBoost/LightGBM, which encode categoricals
+    themselves. as_str=True gives strings (CatBoost rejects NaN categories);
+    otherwise pandas categories fixed at fit, so LightGBM sees the same codes
+    at predict time and unseen values become missing.
+    """
+
+    def __init__(self, numeric=None, categorical=None, as_str: bool = False):
+        self.numeric = numeric
+        self.categorical = categorical
+        self.as_str = as_str
+
+    def fit(self, X, y=None):
+        self.categories_ = {c: sorted(X[c].fillna("").astype(str).unique()) for c in self.categorical}
+        return self
+
+    def transform(self, X):
+        f = X[self.numeric + self.categorical].copy()
+        for c in self.categorical:
+            s = f[c].fillna("").astype(str)
+            f[c] = s if self.as_str else pd.Categorical(s, categories=self.categories_[c])
+        return f
 
 
 MODEL_PATH = "models/price_predictor.joblib"
@@ -548,6 +575,39 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     xgb_rest, xgb_lr, optimal_n = _tuned_xgb(preprocess, "xgb")
     xgb_cheap, _, _ = _tuned_xgb(preprocess_cheap, "xgb, cheap cars")
     candidates["xgb"] = PriceRouted(cheap=xgb_cheap, rest=xgb_rest)
+
+    # Same router, but cars at $10k+ get the mean of the XGB bag, CatBoost and
+    # LightGBM. Beat the XGB router on 7 of 7 splits (VIN, dealer-held-out,
+    # time-forward), -$86 to -$158 mean MAE; blending the cheap side too made
+    # <$10k median % error worse (model_algorithms_research.md, 2026-10-31).
+    # Tree counts come from early stopping on a slice of train, as in _tuned_xgb.
+    X_tr_es, X_val_es, y_tr_es, y_val_es = train_test_split(
+        X_train, y_train_log, test_size=0.15, random_state=0
+    )
+    cat_pre = NativeCats(numeric_features, categorical_features, as_str=True)
+    cat_params = dict(learning_rate=0.06, depth=7, loss_function="RMSE", random_seed=42, verbose=0,
+                      # Tuple: CatBoost copies a list, which breaks sklearn's clone().
+                      cat_features=tuple(categorical_features), allow_writing_files=False)
+    cat_es = CatBoostRegressor(iterations=3000, **cat_params).fit(
+        cat_pre.fit_transform(X_tr_es), y_tr_es, eval_set=(cat_pre.transform(X_val_es), y_val_es),
+        early_stopping_rounds=100,
+    )
+    lgb_pre = NativeCats(numeric_features, categorical_features).fit(X_train)
+    lgb_params = dict(learning_rate=0.05, num_leaves=31, min_child_samples=10, subsample=0.8,
+                      subsample_freq=1, colsample_bytree=0.7, cat_smooth=20, random_state=42, verbose=-1)
+    lgb_es = LGBMRegressor(n_estimators=3000, **lgb_params).fit(
+        lgb_pre.transform(X_tr_es), y_tr_es, eval_set=[(lgb_pre.transform(X_val_es), y_val_es)],
+        callbacks=[early_stopping(100, verbose=False)],
+    )
+    n_cat, n_lgb = cat_es.get_best_iteration() + 1, lgb_es.best_iteration_
+    logger.info(f"[blend] Early stopping: CatBoost {n_cat} trees, LightGBM {n_lgb} trees")
+    blend_rest = VotingRegressor([
+        ("xgb", xgb_rest),
+        ("cat", Pipeline([("preprocess", cat_pre), ("model", CatBoostRegressor(iterations=n_cat, **cat_params))])),
+        ("lgb", Pipeline([("preprocess", NativeCats(numeric_features, categorical_features)),
+                          ("model", LGBMRegressor(n_estimators=n_lgb, **lgb_params))])),
+    ])
+    candidates["blend"] = PriceRouted(cheap=xgb_cheap, rest=blend_rest)
 
     def _eval(y_true_np: np.ndarray, y_pred_np: np.ndarray) -> tuple[float, float]:
         mae = float(mean_absolute_error(y_true_np, y_pred_np))
