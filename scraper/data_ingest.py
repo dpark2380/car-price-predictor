@@ -252,6 +252,25 @@ def _redact(e: Exception) -> str:
     return str(e).replace(API_KEY, "<api_key>") if API_KEY else str(e)
 
 
+SCRAPE_CALLS_LOG = Path("logs/scrape_calls.jsonl")
+
+
+def _log_call(search: dict, num_found, listings: list) -> None:
+    """One JSON line per Marketcheck call: the search and the listing_ids it
+    returned. A later call with the same search that lacks a listing is the
+    only evidence we get that it sold, since coverage is partial and rotating."""
+    try:
+        SCRAPE_CALLS_LOG.parent.mkdir(exist_ok=True)
+        with SCRAPE_CALLS_LOG.open("a") as f:
+            f.write(json.dumps({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                **search, "num_found": num_found,
+                "listing_ids": [_make_listing_id(l) for l in listings],
+            }) + "\n")
+    except Exception as e:  # never let logging cost a paid call's results
+        logger.warning(f"  Could not write {SCRAPE_CALLS_LOG}: {e}")
+
+
 class MarketCheckClient:
     def fetch_listings(
         self,
@@ -327,7 +346,10 @@ class MarketCheckClient:
                 )
                 r.raise_for_status()
 
-                listings = r.json().get("listings", [])
+                body = r.json()
+                listings = body.get("listings", [])
+                _log_call({"zip": _active_zip, "radius": RADIUS, "rows": rows_per_call, "start": start, **params},
+                          body.get("num_found"), listings)
                 got = len(listings)
                 logger.info(f"  Got {got} listings (total: {len(all_listings) + got})")
 
