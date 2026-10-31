@@ -253,9 +253,12 @@ def _redact(e: Exception) -> str:
 
 
 SCRAPE_CALLS_LOG = Path("logs/scrape_calls.jsonl")
+# The latest raw response, so we can see which fields our plan actually fills
+# before mapping more of them (map_listing keeps a small subset).
+SCRAPE_SAMPLE = Path("logs/marketcheck_sample.json")
 
 
-def _log_call(search: dict, num_found, listings: list) -> None:
+def _log_call(search: dict, body: dict) -> None:
     """One JSON line per Marketcheck call: the search and the listing_ids it
     returned. A later call with the same search that lacks a listing is the
     only evidence we get that it sold, since coverage is partial and rotating."""
@@ -264,9 +267,10 @@ def _log_call(search: dict, num_found, listings: list) -> None:
         with SCRAPE_CALLS_LOG.open("a") as f:
             f.write(json.dumps({
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                **search, "num_found": num_found,
-                "listing_ids": [_make_listing_id(l) for l in listings],
+                **search, "num_found": body.get("num_found"),
+                "listing_ids": [_make_listing_id(l) for l in body.get("listings", [])],
             }) + "\n")
+        SCRAPE_SAMPLE.write_text(json.dumps(body, indent=1))
     except Exception as e:  # never let logging cost a paid call's results
         logger.warning(f"  Could not write {SCRAPE_CALLS_LOG}: {e}")
 
@@ -348,8 +352,7 @@ class MarketCheckClient:
 
                 body = r.json()
                 listings = body.get("listings", [])
-                _log_call({"zip": _active_zip, "radius": RADIUS, "rows": rows_per_call, "start": start, **params},
-                          body.get("num_found"), listings)
+                _log_call({"zip": _active_zip, "radius": RADIUS, "rows": rows_per_call, "start": start, **params}, body)
                 got = len(listings)
                 logger.info(f"  Got {got} listings (total: {len(all_listings) + got})")
 

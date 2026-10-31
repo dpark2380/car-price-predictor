@@ -218,9 +218,10 @@ def test_scrape_call_is_logged():
         def raise_for_status(self): pass
         def json(self): return {"num_found": 812, "listings": [{"id": "a1", "vin": "V1"}, {"id": "b2"}]}
     tmp = Path(tempfile.mkdtemp())
-    saved = api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG, data_ingest.requests.get
+    saved = api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG, data_ingest.SCRAPE_SAMPLE, data_ingest.requests.get
     try:
         api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG = tmp / "usage.json", tmp / "calls.jsonl"
+        data_ingest.SCRAPE_SAMPLE = tmp / "sample.json"
         data_ingest.requests.get = lambda *a, **k: Resp()
         data_ingest.MarketCheckClient().fetch_listings(rows_per_call=50, page_cursor_path=tmp / "p.json",
                                                        zip_cursor_path=tmp / "z.json", car_type="used")
@@ -228,8 +229,10 @@ def test_scrape_call_is_logged():
         assert line["listing_ids"] == ["V1-a1", "b2"]        # same ids as car_listings.listing_id
         assert line["num_found"] == 812 and line["start"] == 0 and line["car_type"] == "used"
         assert "api_key" not in line
+        assert json.loads(data_ingest.SCRAPE_SAMPLE.read_text())["num_found"] == 812   # raw body kept
     finally:
-        api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG, data_ingest.requests.get = saved
+        (api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG, data_ingest.SCRAPE_SAMPLE,
+         data_ingest.requests.get) = saved
 
 
 if __name__ == "__main__":
