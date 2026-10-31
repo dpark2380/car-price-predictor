@@ -178,3 +178,80 @@ Script: `/private/tmp/claude-501/-Users-danielpark-Documents-Projects-car-intel/
 - TabPFN Nature paper numbers and its original row limit; categorical limits; M1 speed.
 - LightGBM licence and wheel list (PyPI page failed to load).
 - torch / `pytabkit` support on Python 3.14; RealMLP, TabM, FT-Transformer timings on CPU.
+
+## Follow-up: blend vs production router
+
+Run date 2026-10-31. Question: does the equal-weight XGB + CatBoost + LightGBM blend beat the production `PriceRouted`, not just one untuned XGB, and does the gain hold on dealer-grouped and time-forward splits? No repo code, `models/`, `logs/` or the live DB was touched; data is the same read-only copy (17,893 rows).
+
+What ran:
+
+- **Baseline** = `PriceRouted` rebuilt from `ml/pipeline.py`: two 5-seed XGB bags (cheap side without `comp_price`, rest side with it), same one-hot preprocessing, same `_cohort_features`/`_comp_prices`, routing on the cheap bag's own prediction at $10k, calibration offset = median val log residual of the routed output.
+- **Candidate A** = each side is the equal mean (log space) of its XGB bag, CatBoost and LightGBM. The router then uses A's blended cheap prediction. **Candidate B** = cheap side stays the XGB bag (routing unchanged), only the rest side (>= $10k) is blended.
+- CatBoost and LightGBM use the exp_gbm.py settings, untuned, early stopping on val (3,000 trees max).
+- Splits: VIN seeds 42/1/2 (`_vin_split`); dealer-grouped seeds 42/1/2 (`GroupShuffleSplit` on `_dealer_keys`, same 64/16/20 carve as the VIN split); time-forward = oldest 64% by `first_seen` train, next 16% val, newest 20% test (one split; the improvement study used `last_seen`).
+- Deal proxy, using `model_improvement_research.md` definitions: the production yardstick (`_segment_errors` from val, by price band and cohort size) and `_deal_score_from_prices`; "flagged" = 4+ stars (score >= 75, z >= 1.875), and 5 stars (>= 90). Reported as the share of test listings flagged, by price tier, plus the Jaccard overlap of the flagged sets against baseline.
+
+Deviation from a faithful reproduction: I did **not** re-run the grid search. XGB params come from the latest production artifact (`models/price_predictor.joblib`, v20261030_2312, read-only): cheap lr 0.05 / 1,405 trees, rest lr 0.03 / 1,479 trees, other params from `xgb_fixed_params`. Those were tuned on the seed-42 VIN split, so they are slightly favourable to baseline on that split and mildly mismatched on the others. No early stopping for the baseline (production has none at fit time either); CatBoost and LightGBM do early-stop on the val split, which production's XGB does not, a small advantage to the candidates (see Not verified).
+
+### VIN splits (test n = 3,579 each)
+
+| Config | MAE 42 / 1 / 2 | Mean MAE | Median APE % | Median APE % <$10k | 4+ star % | 5 star % | 4+ star overlap vs base |
+|---|---|---|---|---|---|---|---|
+| Baseline router | 3,002 / 3,036 / 2,982 | 3,007 | 8.14 | 15.54 | 9.40 | 2.78 | 1.00 |
+| A: blend both sides | 2,833 / 2,848 / 2,867 | 2,849 | 7.59 | 14.82 | 9.87 | 3.15 | 0.71 |
+| B: blend rest only | 2,834 / 2,853 / 2,875 | 2,854 | 7.60 | 15.20 | 9.77 | 3.07 | 0.73 |
+
+### Dealer-grouped splits (test n = 2,934 / 3,335 / 5,328)
+
+| Config | MAE 42 / 1 / 2 | Mean MAE | Median APE % | Median APE % <$10k | 4+ star % | 5 star % | 4+ star overlap vs base |
+|---|---|---|---|---|---|---|---|
+| Baseline router | 3,011 / 3,868 / 2,973 | 3,284 | 9.50 | 17.95 | 10.45 | 4.13 | 1.00 |
+| A: blend both sides | 2,961 / 3,746 / 2,886 | 3,198 | 9.37 | 18.44 | 10.92 | 4.34 | 0.73 |
+| B: blend rest only | 2,960 / 3,752 / 2,889 | 3,200 | 9.39 | 18.07 | 11.08 | 4.30 | 0.76 |
+
+### Time-forward split (train oldest 64%, test newest 20%, n = 3,579, one split)
+
+| Config | MAE | Median APE % | Median APE % <$10k | 4+ star % | 5 star % | 4+ star overlap vs base |
+|---|---|---|---|---|---|---|
+| Baseline router | 2,924 | 8.90 | 16.85 | 8.33 | 1.54 | 1.00 |
+| A: blend both sides | 2,835 | 8.43 | 17.39 | 8.44 | 1.59 | 0.64 |
+| B: blend rest only | 2,838 | 8.56 | 16.78 | 8.21 | 1.56 | 0.68 |
+
+Paired MAE difference, A minus baseline, per split: VIN -169 / -188 / -115; dealer -50 / -122 / -86; time -89. A is better on all 7. The dealer-grouped gain (-$86 mean) is about half the VIN gain (-$158), so part of the VIN gain is dealer-proxy variance reduction, but it does not vanish.
+
+4+ star flag rate by price tier (mean over splits of that type; baseline / A / B, %):
+
+| Tier | VIN | Dealer-grouped | Time-forward |
+|---|---|---|---|
+| < $10k | 13.0 / 13.8 / 12.9 | 13.7 / 13.3 / 14.5 | 11.5 / 13.5 / 12.2 |
+| $10-20k | 10.7 / 11.4 / 11.2 | 11.9 / 11.5 / 11.5 | 8.7 / 8.0 / 7.6 |
+| $20-35k | 9.8 / 10.2 / 10.4 | 11.1 / 12.4 / 12.4 | 8.1 / 7.8 / 7.9 |
+| $35-60k | 6.8 / 6.9 / 6.9 | 6.6 / 7.7 / 7.8 | 7.1 / 8.6 / 8.6 |
+| > $60k | 2.9 / 3.4 / 3.4 | 1.7 / 1.3 / 1.3 | 2.5 / 0.0 / 0.0 (n = 121) |
+
+Fit time (seconds, mean per side, M1, 8 threads): XGB 5-seed bag 13-15 (cheap) and 14 (rest); CatBoost 7-17; LightGBM 4-5. A adds about 20-25 s per side over the baseline's bag, B adds about 20-25 s total, on every fit. `train()` also refits the winning model 5 times for out-of-fold scores, so a daily retrain grows by the same factor on that step. Total experiment runtime about 9 minutes.
+
+### Verdict
+
+Ship **B** (blend CatBoost and LightGBM with the XGB bag on the >= $10k side only), conditional on the follow-ups below. The blend beats the tuned production router, not only a single XGB: mean MAE -$153 on VIN splits (3,007 to 2,854), -$84 on dealer-grouped (3,284 to 3,200), -$86 on time-forward (2,924 to 2,838), better on all 7 splits, and better in every price tier by MAE. A is no more accurate than B (within $7 on each split type) but moved the under-$10k median % error the wrong way on dealer-grouped (17.95 to 18.44) and time-forward (16.85 to 17.39), the band the improvement study cares about; B is level with baseline there on dealer and time (18.07 vs 17.95, 16.78 vs 16.85) and gains 0.3 on VIN. Deal proxy: flag rates move by 0.1 to 0.7 points overall and no tier shifts by more than about 2 points except the n = 121 top tier on the time split (2.5 to 0%, 3 listings), so the blend does not obviously inflate or hide deals, but the flagged sets only overlap 64-76% with baseline's (Jaccard), so which cars are flagged changes materially. Needs before shipping: (1) add catboost and lightgbm to `requirements.txt` and confirm both have Python 3.14 wheels in the repo venv (verified only in the scratch venv); (2) implement the blend as a `PriceRouted` rest model whose predict averages the three in log space, with CatBoost/LightGBM fed the raw categorical frame, and save and load it through joblib; (3) re-derive the segment yardstick from the blend's val and OOF errors (production does this already, but check the `segment_errors` shift); (4) check flag rates for the largest dealers, as the improvement study asks; (5) rerun this on the next DB snapshot, since the time-forward result is one split of one week.
+
+### Reproduce
+
+```sh
+S=/private/tmp/claude-501/-Users-danielpark-Documents-Projects-car-intel/60adfdb9-8d02-493a-9a14-b40d473bad40/scratchpad
+cd $S   # needs exp/ venv and car_intel_copy.db, see "Reproduce" above
+PYTHONPATH=/Users/danielpark/car-intel exp/bin/python exp_router_blend.py $S/car_intel_copy.db $S/rb_vin.json vin:42 vin:1 vin:2
+PYTHONPATH=/Users/danielpark/car-intel exp/bin/python exp_router_blend.py $S/car_intel_copy.db $S/rb_dt.json dealer:42 dealer:1 dealer:2 time:0
+exp/bin/python rb_tables.py $S    # prints the tables above
+```
+
+Scripts: scratchpad `exp_router_blend.py` and `rb_tables.py` (same directory as above); durable copies at `scripts/exp_router_blend.py` and `scripts/exp_router_blend_tables.py` (they need the scratch venv with catboost and lightgbm, not the repo venv). Each split takes about 1 to 1.5 minutes, about 9 minutes in total.
+
+### Not verified
+
+- The grid search itself (artifact params used, see above); a fresh tuning per split could move the baseline either way.
+- Candidate early stopping on val versus baseline without it: I did not run a baseline with val early stopping or the blend without it, so some of the gain could be that asymmetry. Earlier single XGB with val early stopping scored 2,985 on VIN here against baseline's 3,007, so the effect is probably under about $25, but this is inferred.
+- Time-forward is one split and uses `first_seen`; the improvement study used `last_seen`. Dealer-grouped test sizes vary 2.9k to 5.3k because large dealers land on one side.
+- Deal proxy is flag rate, not precision; there are no ground-truth deals. The 5-star and top-tier counts are small.
+- No significance test; with 3,000+ test rows the paired differences are about 3 to 6% of MAE and consistent in sign, but only 7 splits.
+- Inference path, wheel availability for the repo venv, and training/serving latency of the blend were not tested.
