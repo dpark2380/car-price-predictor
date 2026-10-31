@@ -63,6 +63,13 @@ export function Photo({ src, alt }) {
 export const daysSinceSeen = (deal) =>
   deal.last_seen ? Math.max(0, Math.floor((Date.now() - new Date(`${deal.last_seen}T00:00:00Z`)) / 86400000)) : null;
 
+// days_listed is as of our last sighting; add the days since then.
+export const daysOnSale = (deal) => (deal.days_listed ?? 0) + (daysSinceSeen(deal) ?? 0);
+
+// Flagged deals skew old (median 117 days for 5 stars vs ~90 overall): a long
+// wait usually means price cuts on a car buyers passed over, so say so.
+export const STALE_DAYS = 90;
+
 export function ListingCard({ deal, href, onOpen }) {
   const name = `${deal.year} ${deal.make} ${deal.model}`;
   const vm = vsMarket(deal.savings);
@@ -95,6 +102,7 @@ export function ListingCard({ deal, href, onOpen }) {
         <div className="card-specs">
           <span className="num">{fmtN(deal.mileage)} mi</span>
           {place && <span>{place}</span>}
+          <span className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>Listed {fmtN(daysOnSale(deal))} days</span>
         </div>
       </div>
     </article>
