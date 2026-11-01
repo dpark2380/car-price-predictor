@@ -103,6 +103,7 @@ export function ListingCard({ deal, href, onOpen }) {
           <span className="num">{fmtN(deal.mileage)} mi</span>
           {place && <span>{place}</span>}
           <span className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>Listed {fmtN(daysOnSale(deal))} days</span>
+          {deal.first_seen && <span className="num">Found {new Date(deal.first_seen).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
         </div>
       </div>
     </article>
