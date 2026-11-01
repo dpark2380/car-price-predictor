@@ -26,14 +26,14 @@ const GRADE_CHOICES = [
   { tier: 5, label: "Great deals only" },
 ];
 
+// Sort field + its usual direction when picked; the Asc/Desc button flips it.
 const SORTS = [
-  { value: "score:desc", label: "Best deal first" },
-  { value: "savings:desc", label: "Most below market" },
-  { value: "price:asc", label: "Price: low to high" },
-  { value: "price:desc", label: "Price: high to low" },
-  { value: "mileage:asc", label: "Mileage: lowest" },
-  { value: "year:desc", label: "Year: newest" },
-  { value: "found:desc", label: "Newest found" },
+  { key: "score", label: "Deal score", dir: "desc" },
+  { key: "savings", label: "Below market", dir: "desc" },
+  { key: "price", label: "Price", dir: "asc" },
+  { key: "mileage", label: "Mileage", dir: "asc" },
+  { key: "year", label: "Year", dir: "desc" },
+  { key: "found", label: "Date found", dir: "desc" },
 ];
 
 const GRADE_MEANINGS = [
@@ -78,7 +78,7 @@ function fromUrlParams(q, view) {
     yearFrom: get("year_from"), yearTo: get("year_to"),
     milesFrom: get("miles_from"), milesTo: get("miles_to"),
     grade: [1, 3, 4, 5].includes(grade) ? grade : 1,
-    sort: SORTS.some((s) => s.value === sort) ? sort : "score:desc",
+    sort: SORTS.some((s) => s.key === get("sort", "score")) && ["asc", "desc"].includes(get("dir", "desc")) ? sort : "score:desc",
     year: get("year"), mileage: get("mileage"),
   };
 }
@@ -737,10 +737,13 @@ export default function CarIntelDashboard() {
                 </button>
                 <label>
                   <span className="sr-only">Sort by</span>
-                  <select value={sort} onChange={(e) => setSort(e.target.value)}>
-                    {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  <select value={sortKey} onChange={(e) => setSort(`${e.target.value}:${SORTS.find((s) => s.key === e.target.value).dir}`)}>
+                    {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
                 </label>
+                <button className="btn btn-secondary" aria-label={`Sorted ${sortDir === "asc" ? "ascending" : "descending"}, click to flip`} onClick={() => setSort(`${sortKey}:${sortDir === "asc" ? "desc" : "asc"}`)}>
+                  {sortDir === "asc" ? "↑ Asc" : "↓ Desc"}
+                </button>
               </div>
             </div>
 
