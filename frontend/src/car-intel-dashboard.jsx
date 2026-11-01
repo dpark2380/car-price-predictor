@@ -523,6 +523,10 @@ export default function CarIntelDashboard() {
                 <dd className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>{fmtN(daysOnSale(deal))} days</dd>
                 <dt>Last seen</dt>
                 <dd className={seen > 7 ? "caution" : ""}>{seen == null ? "—" : seen <= 1 ? "In the last day" : `${seen} days ago`}</dd>
+                {deal.dealer_name && <><dt>Dealer</dt><dd>{deal.dealer_name}</dd></>}
+                {deal.dealer_street && <><dt>Address</dt><dd>{[deal.dealer_street, deal.location_city, deal.location_state].filter(Boolean).join(", ")}</dd></>}
+                {/* Many small dealers' sites block visitors they think are bots; a phone number is never blocked. */}
+                {deal.dealer_phone && <><dt>Phone</dt><dd><a href={`tel:${deal.dealer_phone.replace(/[^\d+]/g, "")}`}>{deal.dealer_phone}</a></dd></>}
               </dl>
               {deal.url && (
                 <div style={{ marginTop: 18 }}>
