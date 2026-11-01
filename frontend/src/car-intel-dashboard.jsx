@@ -33,6 +33,7 @@ const SORTS = [
   { value: "price:desc", label: "Price: high to low" },
   { value: "mileage:asc", label: "Mileage: lowest" },
   { value: "year:desc", label: "Year: newest" },
+  { value: "found:desc", label: "Newest found" },
 ];
 
 const GRADE_MEANINGS = [
@@ -224,9 +225,10 @@ export default function CarIntelDashboard() {
       .filter((d) => !maxMileage || d.mileage <= Number(maxMileage));
 
     const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : -Infinity);
-    const key = { score: "deal_score", price: "price", savings: "savings", mileage: "mileage", year: "year" }[sortKey] || "deal_score";
+    const key = { score: "deal_score", price: "price", savings: "savings", mileage: "mileage", year: "year", found: "first_seen" }[sortKey] || "deal_score";
+    const val = (d) => num(key === "first_seen" ? Date.parse(d.first_seen) : d[key]);
     const dir = sortDir === "asc" ? 1 : -1;
-    return arr.sort((a, b) => (num(a[key]) === num(b[key]) ? num(b.deal_score) - num(a.deal_score) : (num(a[key]) - num(b[key])) * dir));
+    return arr.sort((a, b) => (val(a) === val(b) ? num(b.deal_score) - num(a.deal_score) : (val(a) - val(b)) * dir));
   }, [deals, minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
   // Thousands of cards at once would make the page sluggish: render a slice.

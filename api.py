@@ -204,6 +204,8 @@ def _deal_records(version):
             "dealer_street":   ss(row.get("dealer_street")),
             # Date our scraper last saw the ad live; older means it may have sold.
             "last_seen":       str(row.get("last_seen"))[:10] if row.get("last_seen") is not None else None,
+            # When our scraper first found the ad (UTC), for "Newest found" sorting.
+            "first_seen":      pd.to_datetime(row.get("first_seen")).strftime("%Y-%m-%dT%H:%M:%SZ") if pd.notna(row.get("first_seen")) else None,
         } for _, row in df.iterrows()]
     finally:
         session.close()
