@@ -197,3 +197,24 @@ Read the first 50 listings, not one. For each field: how many are non-null, and 
 - FRED `CUSR0000SETA02` copyright notes: the page shows both "copyrighted" and "Public Domain: Citation Requested" wording; another reason to use BLS directly.
 - The count of distinct vPIC descriptors in our DB (not computed).
 - The `version`/`engine` fields on the `/listing` endpoint differ from the search page; I assumed the search page is right for the search response.
+
+## Confirmed fill rates (one live response, 2026-11-01, 50 listings, "cars" target)
+
+One extra active-search call, same search as the daily scrape. Small sample, one region, so treat the rates as rough.
+
+| Field | Filled | Notes |
+|---|---|---|
+| `build.transmission`, `drivetrain`, `fuel_type`, `doors`, `version`, `std_seating`, `city_mpg`, `highway_mpg`, `made_in` | 50/50 | Spec features are available on the free plan. |
+| `build.powertrain_type` | 49/50 | |
+| `build.engine`, `engine_size`, `engine_block`, `cylinders` | 43-44/50 | Missing on some (likely EVs). |
+| `dealer.dealer_type` | 50/50 | 36 franchise, 14 independent. |
+| `dealer.phone`, street, lat/lon | 50/50 | A fallback when a dealer's website blocks visitors. |
+| `dom_active`, `dom_180`, `first_seen_at` | 50/50 | Deal display only, never price features. |
+| `ref_price`, `price_change_percent` | 40/50, 38/50 | Mostly small cuts (-1% to -2%). Deal display only. |
+| `price_includes_fees`, `fees` | 36/50 | |
+| `carfax_1_owner` | 50/50 | True only at franchise dealers (20/36); every independent listing is False, so False means "not reported", not "multiple owners". |
+| `is_certified` | 2/50 | Too sparse to matter. |
+| `carfax_clean_title` | 0/50 true | Always False: useless. |
+| `msrp` | 50/50 | **Equals `price` in 50/50**: a copy of the asking price, not the factory MSRP. Must never be a feature (it leaks the target). |
+
+The `extra` and `dealer.rating` objects are absent, as the docs say.
