@@ -26,15 +26,16 @@ const GRADE_CHOICES = [
   { tier: 5, label: "Great deals only" },
 ];
 
-// Sort field + its usual direction when picked; the Asc/Desc button flips it.
-const SORTS = [
-  { key: "score", label: "Deal score", dir: "desc" },
-  { key: "savings", label: "Below market", dir: "desc" },
-  { key: "price", label: "Price", dir: "asc" },
-  { key: "mileage", label: "Mileage", dir: "asc" },
-  { key: "year", label: "Year", dir: "desc" },
-  { key: "found", label: "Date found", dir: "desc" },
-];
+// Sort fields: the direction each starts in when picked, and what each
+// direction means in plain words (shown on the flip button).
+const SORTS = {
+  score:   { label: "Deal score",   start: "desc", asc: "Worst first",  desc: "Best first" },
+  savings: { label: "Below market", start: "desc", asc: "Least first",  desc: "Most first" },
+  price:   { label: "Price",        start: "asc",  asc: "Low to high",  desc: "High to low" },
+  mileage: { label: "Mileage",      start: "asc",  asc: "Low to high",  desc: "High to low" },
+  year:    { label: "Year",         start: "desc", asc: "Oldest first", desc: "Newest first" },
+  found:   { label: "Date found",   start: "desc", asc: "Oldest first", desc: "Newest first" },
+};
 
 const GRADE_MEANINGS = [
   [95, "Well below what similar cars list for, far outside our estimate's usual margin of error."],
@@ -68,7 +69,8 @@ function fromUrl() {
 function fromUrlParams(q, view) {
   const get = (k, d = "") => (view === "home" ? d : q.get(k) ?? d);
   const grade = Number(get("grade", "1"));
-  const sort = `${get("sort", "score")}:${get("dir", "desc")}`;
+  const sortKey = SORTS[get("sort")] ? get("sort") : "score";
+  const dir = get("dir").toLowerCase();
   return {
     view,
     listingId: "",
@@ -78,7 +80,7 @@ function fromUrlParams(q, view) {
     yearFrom: get("year_from"), yearTo: get("year_to"),
     milesFrom: get("miles_from"), milesTo: get("miles_to"),
     grade: [1, 3, 4, 5].includes(grade) ? grade : 1,
-    sort: SORTS.some((s) => s.key === get("sort", "score")) && ["asc", "desc"].includes(get("dir", "desc")) ? sort : "score:desc",
+    sortKey, sortDir: dir === "asc" || dir === "desc" ? dir : SORTS[sortKey].start,
     year: get("year"), mileage: get("mileage"),
   };
 }
@@ -127,7 +129,8 @@ export default function CarIntelDashboard() {
   const [minMileage, setMinMileage] = useState(initial.milesFrom);
   const [maxMileage, setMaxMileage] = useState(initial.milesTo);
   const [minStars, setMinStars] = useState(initial.grade);
-  const [sort, setSort] = useState(initial.sort);
+  const [sortKey, setSortKey] = useState(initial.sortKey);
+  const [sortDir, setSortDir] = useState(initial.sortDir);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(60);
 
@@ -203,7 +206,6 @@ export default function CarIntelDashboard() {
   // The API already leaves out stale ads (unseen for 3 weeks, or on sale 6+ months).
   const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
 
-  const [sortKey, sortDir] = sort.split(":");
   const filteredDeals = useMemo(() => {
     const arr = deals
       .filter((d) => d.deal_score != null)
@@ -225,14 +227,22 @@ export default function CarIntelDashboard() {
       .filter((d) => !maxMileage || d.mileage <= Number(maxMileage));
 
     const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : -Infinity);
-    const key = { score: "deal_score", price: "price", savings: "savings", mileage: "mileage", year: "year", found: "first_seen" }[sortKey] || "deal_score";
-    const val = (d) => num(key === "first_seen" ? Date.parse(d.first_seen) : d[key]);
+    const field = { score: "deal_score", price: "price", savings: "savings", mileage: "mileage", year: "year" }[sortKey];
+    // null = unknown; sorted last in either direction rather than as 0.
+    const val = (d) => {
+      const v = sortKey === "found" ? Date.parse(d.first_seen) : d[field] == null ? NaN : Number(d[field]);
+      return Number.isFinite(v) ? v : null;
+    };
     const dir = sortDir === "asc" ? 1 : -1;
-    return arr.sort((a, b) => (val(a) === val(b) ? num(b.deal_score) - num(a.deal_score) : (val(a) - val(b)) * dir));
+    return arr.sort((a, b) => {
+      const x = val(a), y = val(b);
+      if (x === null || y === null) return (x === null) - (y === null);
+      return x === y ? num(b.deal_score) - num(a.deal_score) : (x - y) * dir;
+    });
   }, [deals, minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
   // Thousands of cards at once would make the page sluggish: render a slice.
-  useEffect(() => setVisibleCount(60), [minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sort]);
+  useEffect(() => setVisibleCount(60), [minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
   const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minPrice || maxPrice || minYear || maxYear || minMileage || maxMileage || minStars > 1;
   const activeFilterCount = [makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice || maxPrice, minYear || maxYear, minMileage || maxMileage, minStars > 1].filter(Boolean).length;
@@ -243,7 +253,7 @@ export default function CarIntelDashboard() {
   useEffect(() => {
     const url =
       view === "results"
-        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== "desc" ? sortDir : "" })
+        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== SORTS[sortKey].start ? sortDir : "" })
         : view === "estimator"
         ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
         : view === "listing"
@@ -271,7 +281,7 @@ export default function CarIntelDashboard() {
       if (u.view === "results") {
         setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
         setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
-        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setSort(u.sort);
+        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setSortKey(u.sortKey); setSortDir(u.sortDir);
       } else if (u.view === "estimator") {
         setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
       }
@@ -653,7 +663,7 @@ export default function CarIntelDashboard() {
   // ── LISTINGS ────────────────────────────────────────────────────────────────
   // While the full list loads, the default view (best deals, no filters) can
   // already show the top-100 preview, which is the same rows.
-  const cards = !loading.deals ? filteredDeals.slice(0, visibleCount) : !anyFilter && sort === "score:desc" ? preview.slice(0, visibleCount) : [];
+  const cards = !loading.deals ? filteredDeals.slice(0, visibleCount) : !anyFilter && sortKey === "score" && sortDir === "desc" ? preview.slice(0, visibleCount) : [];
   return (
     <>
       {header}
@@ -737,12 +747,12 @@ export default function CarIntelDashboard() {
                 </button>
                 <label>
                   <span className="sr-only">Sort by</span>
-                  <select value={sortKey} onChange={(e) => setSort(`${e.target.value}:${SORTS.find((s) => s.key === e.target.value).dir}`)}>
-                    {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                  <select value={sortKey} onChange={(e) => { setSortKey(e.target.value); setSortDir(SORTS[e.target.value].start); }}>
+                    {Object.entries(SORTS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
                   </select>
                 </label>
-                <button className="btn btn-secondary" aria-label={`Sorted ${sortDir === "asc" ? "ascending" : "descending"}, click to flip`} onClick={() => setSort(`${sortKey}:${sortDir === "asc" ? "desc" : "asc"}`)}>
-                  {sortDir === "asc" ? "↑ Asc" : "↓ Desc"}
+                <button className="btn btn-secondary" title="Flip the order" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
+                  <span aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
                 </button>
               </div>
             </div>
