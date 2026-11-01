@@ -132,7 +132,7 @@ a { color: var(--accent); }
 .results-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .results-bar h1 { font-size: 22px; font-weight: 700; }
 .results-bar h1 span { font-weight: 400; color: var(--ink-3); font-size: 16px; margin-left: 6px; }
-.results-tools { display: flex; gap: 10px; align-items: center; }
+.results-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .results-tools select { height: 40px; border: 1px solid var(--line-strong); border-radius: 6px; padding: 0 10px; background: var(--surface); }
 .filters-toggle { display: none; }
 .empty { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 40px; text-align: center; color: var(--ink-2); }
