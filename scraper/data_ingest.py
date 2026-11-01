@@ -163,11 +163,18 @@ def normalize_body_type(bt: str | None) -> str | None:
     return aliases.get(s, bt.strip())
 
 
+def _num(v, cast):
+    """cast(v), or None when missing or junk (the feed mixes "2.0", 2.0, "", None)."""
+    try:
+        return None if v in (None, "") else cast(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
 def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
     try:
         build  = raw.get("build") or {}
         dealer = raw.get("dealer") or {}
-        extra  = raw.get("extra") or {}
 
         price   = raw.get("price") or raw.get("dp_price")
         mileage = raw.get("miles")
@@ -203,10 +210,30 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "exterior_color": raw.get("exterior_color"),
             "price":          float(price),
             "mileage":        int(mileage),
-            "accident_count": extra.get("accident_count", 0) or 0,
-            "owner_count":    extra.get("owner_count", 1) or 1,
             "dealer_name":    dealer.get("name"),
-            "dealer_rating":  dealer.get("rating"),
+            # Search results carry no accident/owner history or dealer rating
+            # (those columns were always 0/1/NULL); these come free with them.
+            "dealer_type":    dealer.get("dealer_type"),
+            "dealer_phone":   dealer.get("phone"),
+            "dealer_street":  dealer.get("street"),
+            "transmission":   build.get("transmission"),
+            "drivetrain":     build.get("drivetrain"),
+            "fuel_type":      build.get("fuel_type"),
+            "powertrain_type": build.get("powertrain_type"),
+            "engine_size":    _num(build.get("engine_size"), float),
+            "cylinders":      _num(build.get("cylinders"), int),
+            "doors":          _num(build.get("doors"), int),
+            "seats":          _num(build.get("std_seating"), int),
+            "city_mpg":       _num(build.get("city_mpg"), int),
+            "highway_mpg":    _num(build.get("highway_mpg"), int),
+            # Dealer-reported; only franchise dealers ever say True, so False
+            # means "not reported", not "several owners".
+            "carfax_1_owner": None if raw.get("carfax_1_owner") is None else int(bool(raw["carfax_1_owner"])),
+            # Price-cut history: outcomes of pricing, for the deal display and
+            # validation only, never price-model features.
+            "ref_price":      _num(raw.get("ref_price"), float),
+            "price_change_percent": _num(raw.get("price_change_percent"), float),
+            "dom_active":     _num(raw.get("dom_active"), int),
             "location_city":  dealer.get("city"),
             "location_state": dealer.get("state"),
             "location_zip":   dealer.get("zip"),

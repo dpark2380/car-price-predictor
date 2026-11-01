@@ -198,6 +198,21 @@ def test_map_listing_keeps_first_https_photo():
     assert map_listing({**raw, "media": stub})["photo_url"] == "https://cdn.example/2.jpg"
 
 
+def test_map_listing_free_fields():
+    from scraper.data_ingest import map_listing
+    raw = {"price": 18999, "miles": 42000, "vin": "X", "id": "1", "carfax_1_owner": False,
+           "ref_price": 19499, "price_change_percent": -0.03, "dom_active": "27",
+           "build": {"year": 2019, "make": "Honda", "model": "Accord", "transmission": "Automatic",
+                     "drivetrain": "FWD", "engine_size": "1.5", "cylinders": 4, "std_seating": "5", "city_mpg": ""},
+           "dealer": {"name": "Lot", "dealer_type": "independent", "phone": "(555) 010-2000", "street": "1 Main St"}}
+    m = map_listing(raw)
+    assert (m["drivetrain"], m["engine_size"], m["cylinders"], m["seats"]) == ("FWD", 1.5, 4, 5)
+    assert m["city_mpg"] is None and m["dom_active"] == 27            # junk/empty -> None, strings cast
+    assert m["carfax_1_owner"] == 0 and map_listing({**raw, "carfax_1_owner": None})["carfax_1_owner"] is None
+    assert (m["dealer_type"], m["dealer_phone"], m["price_change_percent"]) == ("independent", "(555) 010-2000", -0.03)
+    assert not {"accident_count", "owner_count", "dealer_rating"} & m.keys()   # dead fields no longer written
+
+
 def test_dealer_sites_round_trip_and_host():
     import tempfile
     from pathlib import Path
@@ -247,6 +262,7 @@ if __name__ == "__main__":
     test_month_end_topup()
     test_purge_cloudflare_cache()
     test_map_listing_keeps_first_https_photo()
+    test_map_listing_free_fields()
     test_dealer_sites_round_trip_and_host()
     test_scrape_call_is_logged()
     print("ok")

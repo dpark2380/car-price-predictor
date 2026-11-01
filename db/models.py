@@ -26,10 +26,26 @@ class CarListing(Base):
     exterior_color = Column(String)
     price          = Column(Float)
     mileage        = Column(Integer)
-    accident_count = Column(Integer, default=0)
-    owner_count    = Column(Integer, default=1)
     dealer_name    = Column(String)
-    dealer_rating  = Column(Float)
+    # accident_count, owner_count and dealer_rating are still in the table but
+    # were always 0/1/NULL (search results never carry them); no longer written.
+    dealer_type    = Column(String)    # franchise / independent
+    dealer_phone   = Column(String)
+    dealer_street  = Column(String)
+    transmission   = Column(String)
+    drivetrain     = Column(String)
+    fuel_type      = Column(String)
+    powertrain_type = Column(String)
+    engine_size    = Column(Float)
+    cylinders      = Column(Integer)
+    doors          = Column(Integer)
+    seats          = Column(Integer)
+    city_mpg       = Column(Integer)
+    highway_mpg    = Column(Integer)
+    carfax_1_owner = Column(Integer)   # 1/0 as reported; 0 is "not reported" at independents
+    ref_price      = Column(Float)     # price-cut history: display/validation only,
+    price_change_percent = Column(Float)  # never price-model features (outcomes of pricing)
+    dom_active     = Column(Integer)
     location_city  = Column(String)
     location_state = Column(String)
     location_zip   = Column(String)

@@ -52,12 +52,16 @@ class ListingRepository:
                 # Only mutable fields that can legitimately change between scrapes:
                 # price (dealer reductions), mileage (odometer corrections),
                 # days_listed from API dom (reflects actual market age),
-                # and dealer metadata
+                # and dealer metadata. Spec fields are fixed per car but listed so
+                # rows from before they were mapped (2026-11-01) fill in when re-seen.
                 mutable_fields = {
                     "price", "mileage", "days_listed",
-                    "dealer_name", "dealer_rating",
+                    "dealer_name", "dealer_type", "dealer_phone", "dealer_street",
                     "location_city", "location_state", "location_zip",
                     "scrape_source", "photo_url",
+                    "transmission", "drivetrain", "fuel_type", "powertrain_type", "engine_size",
+                    "cylinders", "doors", "seats", "city_mpg", "highway_mpg", "carfax_1_owner",
+                    "ref_price", "price_change_percent", "dom_active",
                 }
                 for k in mutable_fields:
                     v = data.get(k)

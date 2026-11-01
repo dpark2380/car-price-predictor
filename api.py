@@ -198,8 +198,10 @@ def _deal_records(version):
             "location_state":  row.get("location_state"),
             "location_city":   row.get("location_city"),
             "condition":       row.get("condition"),
-            "accident_count":  si(row.get("accident_count")) or 0,
             "days_listed":     si(row.get("days_listed")) or 0,
+            "dealer_name":     ss(row.get("dealer_name")),
+            "dealer_phone":    ss(row.get("dealer_phone")),
+            "dealer_street":   ss(row.get("dealer_street")),
             # Date our scraper last saw the ad live; older means it may have sold.
             "last_seen":       str(row.get("last_seen"))[:10] if row.get("last_seen") is not None else None,
         } for _, row in df.iterrows()]
@@ -400,7 +402,7 @@ def predict_price():
     """
     Returns a predicted market price for a given car.
     Required: make, model, year, mileage
-    Optional: accident_count, owner_count, state
+    Optional: trim, state
     """
     make       = request.args.get("make", "").strip()[:60]
     model_name = request.args.get("model", "").strip()[:60]
@@ -428,8 +430,6 @@ def predict_price():
             "year":           year,
             "mileage":        mileage,
             "trim":           request.args.get("trim", "")[:60],
-            "accident_count": _arg_int("accident_count", 0, 0, 20),
-            "owner_count":    _arg_int("owner_count", 1, 1, 20),
             "location_state": request.args.get("state", "")[:2],
         }
 
