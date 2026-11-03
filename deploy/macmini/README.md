@@ -6,7 +6,7 @@ LaunchDaemons, so they survive reboots without anyone logging in.
 
 | Service | Label | What |
 |---|---|---|
-| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` every 86,400 s (daily) |
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` daily at 10:00 local time |
 | API | `com.carintel.api` | gunicorn, 1 worker x 4 threads, port 5001, restarted if it dies |
 
 ## Cutover

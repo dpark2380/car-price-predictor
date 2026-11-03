@@ -27,10 +27,17 @@
         <string>/Users/__USER__</string>
     </dict>
 
-    <!-- Daily: ~15 Marketcheck calls a run, ~450 a month against the free
-         plan's 500 (the scraper also stops at MARKETCHECK_MONTHLY_BUDGET). -->
-    <key>StartInterval</key>
-    <integer>86400</integer>
+    <!-- Daily at 10:00 local: ~15 Marketcheck calls a run, ~450 a month against
+         the free plan's 500 (the scraper also stops at MARKETCHECK_MONTHLY_BUDGET).
+         A calendar time, not StartInterval: that counts from the previous run's
+         end, so a 20-minute job slid 20 minutes later every day. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
 
     <key>RunAtLoad</key>
     <true/>

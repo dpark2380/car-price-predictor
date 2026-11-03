@@ -79,7 +79,7 @@ The pipeline, API and dashboard run unattended on an always-on Mac mini as three
 
 | Service | launchd label | What it runs |
 |---|---|---|
-| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and every 86,400 s (daily): scrape → data validation → train → score → popularity snapshot |
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and daily at 10:00 local time: scrape → data validation → train → score → popularity snapshot |
 | API | `com.carintel.api` | `api.py` under gunicorn on port 5001, restarted if it exits |
 | Dashboard | Cloudflare Pages | https://cars.danielpark.fyi, rebuilt on every push to `main` |
 
