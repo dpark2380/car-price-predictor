@@ -204,7 +204,8 @@ export default function CarIntelDashboard() {
   }, [deals]);
 
   // The API already leaves out stale ads (unseen for 3 weeks, or on sale 6+ months).
-  const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
+  // Home page: only cars with a photo; the full listings page still shows all.
+  const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null && d.photo_url).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
 
   const filteredDeals = useMemo(() => {
     const arr = deals
