@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
-import { BrandMark, CardSkeleton, DealPill, ListingCard, Photo, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, vsMarket } from "./components/ui";
+import { BrandMark, CardSkeleton, DealPill, ListingCard, Photo, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
@@ -533,6 +533,7 @@ export default function CarIntelDashboard() {
                 <dt>Location</dt><dd>{[deal.location_city, deal.location_state].filter(Boolean).join(", ") || "—"}</dd>
                 <dt>On sale for</dt>
                 <dd className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>{fmtN(daysOnSale(deal))} days</dd>
+                {priceCut(deal) && <><dt>Price cut</dt><dd className="num">{priceCut(deal)}{deal.ref_price ? ` (was ${fmt$(deal.ref_price)})` : ""}</dd></>}
                 <dt>Last seen</dt>
                 <dd className={seen > 7 ? "caution" : ""}>{seen == null ? "—" : seen <= 1 ? "In the last day" : `${seen} days ago`}</dd>
                 {deal.dealer_name && <><dt>Dealer</dt><dd>{deal.dealer_name}</dd></>}

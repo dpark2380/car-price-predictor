@@ -70,6 +70,10 @@ export const daysOnSale = (deal) => (deal.days_listed ?? 0) + (daysSinceSeen(dea
 // wait usually means price cuts on a car buyers passed over, so say so.
 export const STALE_DAYS = 90;
 
+// Size of the dealer's last price cut, e.g. "8%"; null if none reported.
+export const priceCut = (deal) =>
+  deal.price_change_percent < 0 ? `${Math.round(-deal.price_change_percent) || "<1"}%` : null;
+
 export function ListingCard({ deal, href, onOpen }) {
   const name = `${deal.year} ${deal.make} ${deal.model}`;
   const vm = vsMarket(deal.savings);
@@ -103,6 +107,7 @@ export function ListingCard({ deal, href, onOpen }) {
           <span className="num">{fmtN(deal.mileage)} mi</span>
           {place && <span>{place}</span>}
           <span className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>Listed {fmtN(daysOnSale(deal))} days</span>
+          {priceCut(deal) && <span className="num">Price cut {priceCut(deal)}</span>}
           {deal.first_seen && <span className="num">Found {new Date(deal.first_seen).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
         </div>
       </div>
