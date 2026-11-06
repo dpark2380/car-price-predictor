@@ -579,7 +579,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     # Same router, but cars at $10k+ get the mean of the XGB bag, CatBoost and
     # LightGBM. Beat the XGB router on 7 of 7 splits (VIN, dealer-held-out,
     # time-forward), -$86 to -$158 mean MAE; blending the cheap side too made
-    # <$10k median % error worse (model_algorithms_research.md, 2026-10-31).
+    # <$10k median % error worse (research/model_algorithms_research.md, 2026-10-31).
     # Tree counts come from early stopping on a slice of train, as in _tuned_xgb.
     X_tr_es, X_val_es, y_tr_es, y_val_es = train_test_split(
         X_train, y_train_log, test_size=0.15, random_state=0

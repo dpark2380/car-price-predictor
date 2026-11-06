@@ -506,7 +506,7 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 **Change:** `objective="reg:squarederror"`. From the start until 2026-10-14 the model used `reg:absoluteerror`.
 
-**Why:** MAE loss was chosen so expensive outliers wouldn't dominate, but the target is already log price, where squared error penalises relative rather than dollar error. Switching back on the 2026-10-14 data: test MAE $3,754 → $3,318 (val $3,788 → $3,321), median abs % error 8.8% → 8.2%, under-$10k 18.2% → 15.7%, luxury MAE $5,183 → $4,624, non-luxury $3,075 → $2,697. `model_research.md` saw the same direction on three VIN splits.
+**Why:** MAE loss was chosen so expensive outliers wouldn't dominate, but the target is already log price, where squared error penalises relative rather than dollar error. Switching back on the 2026-10-14 data: test MAE $3,754 → $3,318 (val $3,788 → $3,321), median abs % error 8.8% → 8.2%, under-$10k 18.2% → 15.7%, luxury MAE $5,183 → $4,624, non-luxury $3,075 → $2,697. `research/model_research.md` saw the same direction on three VIN splits.
 
 **File:** `ml/pipeline.py` — `xgb_fixed_params["objective"]`
 
@@ -607,7 +607,7 @@ The cap finds the minimum additional regularisation beyond lambda_min that produ
 
 **Change:** The xgb candidate averages 5 XGBRegressors that differ only in `random_state` (`VotingRegressor`). Grid search and early stopping stay single-seed.
 
-**Why:** `subsample` and `colsample_bytree` make each seed's trees differ; averaging cuts variance at ~6k training rows. Test MAE -$33 on the 2026-10-13 data, -$48 averaged over three VIN splits in `model_improvement_research.md`.
+**Why:** `subsample` and `colsample_bytree` make each seed's trees differ; averaging cuts variance at ~6k training rows. Test MAE -$33 on the 2026-10-13 data, -$48 averaged over three VIN splits in `research/model_improvement_research.md`.
 
 ---
 
