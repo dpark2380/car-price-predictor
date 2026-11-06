@@ -36,3 +36,6 @@ deploy/macmini/out/
 
 # Security audit: lists host ports/settings, keep out of the public repo
 security_audit.md
+
+# Claude Code local config and skills
+.claude/
