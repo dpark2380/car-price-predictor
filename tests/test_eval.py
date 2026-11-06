@@ -11,7 +11,7 @@ from sklearn.base import BaseEstimator
 
 from db.models import init_db, get_session, CarListing, Prediction, MIN_PRICE
 from db.repository import ListingRepository, PredictionRepository
-from ml.pipeline import (_vin_split, _vin_groups, _deal_score_from_prices, _deal_label,
+from ml.pipeline import (_vin_split, _vin_groups, _deal_score_from_prices, _deal_label, _hold_back,
                          _segment_errors, _segment_error_for,
                          _dealer_keys, _cohort_ref, _cohort_features, PriceRouted)
 
@@ -56,6 +56,15 @@ def test_deal_score_scales_with_segment_error():
     # 5 stars needs a discount of at least 3x the segment error
     assert _deal_label(_deal_score_from_prices(8200, 10000, 6.0)) == "5 Stars"   # 18% = 3x
     assert _deal_label(_deal_score_from_prices(8300, 10000, 6.0)) != "5 Stars"   # 17%
+
+
+def test_hold_back_stale_price_cut():
+    assert _deal_label(_hold_back(97.0, 120, -8.0)) == "4 Stars"
+    assert _hold_back(97.0, 30, -8.0) == 97.0             # not stale
+    assert _hold_back(97.0, 120, None) == 97.0            # no cut reported
+    assert _hold_back(97.0, 120, float("nan")) == 97.0
+    assert _hold_back(97.0, 120, 3.0) == 97.0             # price went up
+    assert _hold_back(70.0, 120, -8.0) == 70.0            # only caps 5 Stars
 
 
 def test_segment_errors():
@@ -254,6 +263,7 @@ if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
     test_deal_score_scales_with_segment_error()
+    test_hold_back_stale_price_cut()
     test_segment_errors()
     test_cohort_features_exclude_own_dealer()
     test_comp_price_uses_nearest_other_dealer_cars()

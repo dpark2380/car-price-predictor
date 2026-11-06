@@ -202,6 +202,9 @@ def _deal_records(version):
             "dealer_name":     ss(row.get("dealer_name")),
             "dealer_phone":    ss(row.get("dealer_phone")),
             "dealer_street":   ss(row.get("dealer_street")),
+            # Last price cut (negative %) and the price before it; display only.
+            "price_change_percent": sf(row.get("price_change_percent")),
+            "ref_price":       sf(row.get("ref_price")),
             # Date our scraper last saw the ad live; older means it may have sold.
             "last_seen":       str(row.get("last_seen"))[:10] if row.get("last_seen") is not None else None,
             # When our scraper first found the ad (UTC), for the "Date found" sort.

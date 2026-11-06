@@ -958,6 +958,18 @@ def _deal_label(score: float) -> str:
     return "1 Star"
 
 
+# Flagged deals skew old: a car still unsold after HOLD_BACK_DAYS whose dealer
+# has already cut the price is more often one buyers passed over (condition,
+# history) than a bargain, so it tops out at 4 Stars.
+HOLD_BACK_DAYS = 90
+
+
+def _hold_back(score: float, days_listed, price_change_percent) -> float:
+    stale_and_cut = (pd.notna(days_listed) and days_listed >= HOLD_BACK_DAYS
+                     and pd.notna(price_change_percent) and price_change_percent < 0)
+    return min(score, 89.9) if stale_and_cut else score
+
+
 def score_listings(df: pd.DataFrame) -> list[dict]:
     """
     Produces a 0–100 deal_score where:
@@ -1017,7 +1029,7 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
             segment_error_pct=_segment_error_for(
                 actual, segment_errors, None if counts is None else float(counts[i])),
         )
-        score = round(score, 1)
+        score = _hold_back(round(score, 1), row.get("days_listed"), row.get("price_change_percent"))
 
         results.append(
             {
