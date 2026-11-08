@@ -35,7 +35,7 @@ export function PriceBar({ score }) {
       </div>
       <div className="pricebar-legend">
         <span>Below market</span>
-        <span>Above</span>
+        <span>Above market</span>
       </div>
     </div>
   );
@@ -56,7 +56,15 @@ function CarOutline() {
 
 export function Photo({ src, alt }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) return <CarOutline />;
+  if (!src || failed) {
+    // CSS gives a photo box holding this a shorter band, so photo-less cards don't fill the page with empty boxes.
+    return (
+      <div className="no-photo">
+        <CarOutline />
+        <span>No photo available</span>
+      </div>
+    );
+  }
   return <img src={src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
@@ -75,7 +83,9 @@ export const STALE_DAYS = 90;
 export const priceCut = (deal) =>
   deal.price_change_percent < 0 ? `${Math.round(-deal.price_change_percent) || "<1"}%` : null;
 
-export function ListingCard({ deal, href, onOpen }) {
+// level: the heading level of the title, one below the section it sits in.
+export function ListingCard({ deal, href, onOpen, level = 3 }) {
+  const Title = `h${level}`;
   const name = `${deal.year} ${deal.make} ${deal.model}`;
   const vm = vsMarket(deal.savings);
   const sub = [deal.trim, normalizeBodyType(deal.body_type)].filter((v) => v && v !== "Unknown").join(", ");
@@ -87,7 +97,7 @@ export function ListingCard({ deal, href, onOpen }) {
         <DealPill score={deal.deal_score} />
       </div>
       <div className="card-body">
-        <h3 className="card-title">
+        <Title className="card-title">
           <a
             href={href}
             onClick={(e) => {
@@ -98,7 +108,7 @@ export function ListingCard({ deal, href, onOpen }) {
           >
             {name}
           </a>
-        </h3>
+        </Title>
         {sub && <div className="card-sub">{sub}</div>}
         <div className="card-price num">{fmt$(deal.price)}</div>
         <div className={`card-market num ${vm.cls}`}>{vm.text}</div>

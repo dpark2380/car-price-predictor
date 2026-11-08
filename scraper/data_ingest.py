@@ -271,7 +271,11 @@ def _save_page_cursor(page: int, path: Path | None = None) -> None:
 
 
 # Dealer sites' "no photo yet" images, e.g. vehicle-image-notavailable-320x240.jpg
-_PLACEHOLDER_PHOTO = re.compile(r"not-?available|no-?image|no-?photo|coming-?soon|placeholder", re.I)
+# Dealer stand-ins for a missing photo; the last four were found on live listings
+# (2026-11-08): notfound.jpg, photo_unavailable_640.png, *_newarrivalphoto.jpg
+# ("Photos coming soon"), and goxee's napic_944_gt.png (a covered car).
+_PLACEHOLDER_PHOTO = re.compile(
+    r"not-?available|no-?image|no-?photo|coming-?soon|placeholder|not-?found|unavailable|new-?arrival|/na/napic", re.I)
 
 
 def _redact(e: Exception) -> str:
