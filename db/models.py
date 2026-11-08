@@ -93,6 +93,14 @@ class VinSpecs(Base):
     data       = Column(Text)                       # vPIC fields, {} if none
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
+# Auto.dev photo lookups (scraper/vehicle_photos.py), so a VIN is asked about
+# once, not nightly. found=0 rows are retried after RETRY_MISS_DAYS.
+class VinPhoto(Base):
+    __tablename__ = "vin_photos"
+    vin        = Column(String, primary_key=True)
+    found      = Column(Integer, nullable=False)    # 1 = photo_url filled from Auto.dev
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
 class ModelSpecs(Base):
     __tablename__ = "model_specs"
     id         = Column(Integer, primary_key=True, autoincrement=True)

@@ -20,7 +20,7 @@ from db.repository import ListingRepository, PredictionRepository, PopularityRep
 from db.validation import run_validation
 from scraper.api_usage import NY_TZ, month_total
 from scraper.data_ingest import DataIngestor, MONTHLY_CALL_BUDGET
-from scraper import dealer_sites, vehicle_specs
+from scraper import dealer_sites, vehicle_photos, vehicle_specs
 from ml import pipeline
 from env_utils import env_int
 
@@ -39,6 +39,11 @@ INACTIVE_AFTER_DAYS = env_int("INACTIVE_AFTER_DAYS", 60)
 # ~10 batch calls plus a few calls per new year/make/model. `--specs` backfills
 # with no cap.
 SPECS_DAILY_CALLS = env_int("SPECS_DAILY_CALLS", 300)
+# Auto.dev photo lookups per daily run. 30 x 31 days stays under the free
+# plan's 1,000 calls a month; ~16 new photo-less listings arrive a day, and
+# spare calls work back through older ones. ponytail: daily cap, not a month
+# counter; track usage like api_usage if the plan or volume changes.
+PHOTOS_DAILY_CALLS = env_int("PHOTOS_DAILY_CALLS", 30)
 
 # ── Persistent run logging ────────────────────────────────────────────────────
 
@@ -252,6 +257,11 @@ def run_all(engine):
             dealer_check_job(repo)
         except Exception as e:  # never fail the run over a link check
             logger.warning(f"Dealer site check failed: {e}")
+        try:
+            vehicle_photos.fill_missing(repo.session, PHOTOS_DAILY_CALLS)
+        except Exception as e:  # a missing photo only shows the car outline
+            repo.session.rollback()
+            logger.warning(f"Photo lookup failed: {e}")
         try:
             specs_job(repo, SPECS_DAILY_CALLS)
         except Exception as e:  # specs are a nice-to-have on the detail page

@@ -284,6 +284,39 @@ def test_scrape_call_is_logged():
          data_ingest.requests.get) = saved
 
 
+def test_autodev_photos_fill_once():
+    import os
+    from scraper import vehicle_photos
+    from db.models import VinPhoto
+    session = get_session(init_db("sqlite://"))
+    for i, vin in enumerate(["1HGCM82633A004352", "2HGCM82633A004353"]):
+        session.add(CarListing(listing_id=f"L{i}", vin=vin, make="Honda", model="Accord", year=2019, price=9000,
+                               is_active=1, first_seen=datetime(2026, 11, 1 + i)))
+    session.commit()
+    class Resp:
+        def __init__(self, code, body): self.status_code, self.body = code, body
+        def json(self): return self.body
+    calls = []
+    def fake_get(url, **k):
+        calls.append(url)
+        return Resp(200, {"data": {"retail": ["https://api.auto.dev/photos/retail/x-1.jpg"]}}) if "352" in url \
+            else Resp(404, {"error": "VIN_NOT_FOUND"})
+    saved = vehicle_photos.requests.get, vehicle_photos.time.sleep, os.environ.get("AUTODEV_API_KEY")
+    try:
+        vehicle_photos.requests.get, vehicle_photos.time.sleep = fake_get, lambda s: None
+        os.environ["AUTODEV_API_KEY"] = "test"
+        assert vehicle_photos.fill_missing(session, 1) == 1 and "353" in calls[0]   # newest first, capped
+        assert vehicle_photos.fill_missing(session, 5) == 1                          # the miss isn't re-asked
+        photos = dict(session.query(CarListing.vin, CarListing.photo_url))
+        assert photos["1HGCM82633A004352"].endswith("x-1.jpg") and photos["2HGCM82633A004353"] is None
+        assert vehicle_photos.fill_missing(session, 5) == 0                          # both recorded
+        assert session.query(VinPhoto).count() == 2
+    finally:
+        vehicle_photos.requests.get, vehicle_photos.time.sleep = saved[:2]
+        if saved[2] is None: os.environ.pop("AUTODEV_API_KEY", None)
+        else: os.environ["AUTODEV_API_KEY"] = saved[2]
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -301,4 +334,5 @@ if __name__ == "__main__":
     test_map_listing_free_fields()
     test_dealer_sites_round_trip_and_host()
     test_scrape_call_is_logged()
+    test_autodev_photos_fill_once()
     print("ok")
