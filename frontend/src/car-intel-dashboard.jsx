@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
+import { Select } from "./components/Select";
 import { BrandMark, CardSkeleton, DealPill, ListingCard, Photo, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
@@ -100,17 +101,6 @@ const PAGE_TITLES = {
   estimator: "What is my car worth? Used car price check | Car Intel",
   listing: "Used car listing | Car Intel",
 };
-
-function Field({ label, value, onChange, disabled, children }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
-        {children}
-      </select>
-    </label>
-  );
-}
 
 export default function CarIntelDashboard() {
   const initial = useMemo(fromUrl, []);
@@ -411,22 +401,22 @@ export default function CarIntelDashboard() {
           <h1 id="search-title" className="page-title">Search {total ? fmtN(total) : ""} used cars, each graded on price</h1>
           <section className="search-panel" aria-labelledby="search-title">
             <div className="search-grid">
-              <Field label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
+              <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
                 <option value="">All makes</option>
                 {makeOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
-              </Field>
-              <Field label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
+              </Select>
+              <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
                 <option value="">All models</option>
                 {modelOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
-              </Field>
-              <Field label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); setSizeFilter(""); }}>
+              </Select>
+              <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); setSizeFilter(""); }}>
                 <option value="">All body types</option>
                 {bodyCounts.map(([b]) => <option key={b} value={b}>{b}</option>)}
-              </Field>
-              <Field label="Max price" value={maxPrice} onChange={setMaxPrice}>
+              </Select>
+              <Select label="Max price" value={maxPrice} onChange={setMaxPrice}>
                 <option value="">Any price</option>
                 {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-              </Field>
+              </Select>
               <button className="btn" onClick={() => setView("results")}>
                 {homeCount == null ? "Show cars" : `Show ${fmtN(homeCount)} cars`}
               </button>
@@ -612,19 +602,19 @@ export default function CarIntelDashboard() {
           <div className="pc-layout">
             <section className="panel" aria-labelledby="pc-title">
               <form className="pc-form" onSubmit={(e) => { e.preventDefault(); runEstimate(); }}>
-                <Field label="Make" value={estMake} onChange={(v) => { setEstMake(v); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
+                <Select label="Make" value={estMake} onChange={(v) => { setEstMake(v); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
                   <option value="">Choose a make</option>
                   {makeOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
-                </Field>
-                <Field label="Model" value={estModel} onChange={(v) => { setEstModel(v); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
+                </Select>
+                <Select label="Model" value={estModel} onChange={(v) => { setEstModel(v); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
                   <option value="">Choose a model</option>
                   {estModelOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
-                </Field>
+                </Select>
                 {estTrimOptions.length > 0 && (
-                  <Field label="Trim (optional)" value={estTrim} onChange={(v) => { setEstTrim(v); setEstResult(null); }}>
+                  <Select label="Trim (optional)" value={estTrim} onChange={(v) => { setEstTrim(v); setEstResult(null); }}>
                     <option value="">Any trim</option>
                     {estTrimOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </Field>
+                  </Select>
                 )}
                 <div className="pair">
                   <label className="field">
@@ -707,55 +697,55 @@ export default function CarIntelDashboard() {
               Filters
               {anyFilter && <button className="btn-link" onClick={resetFilters}>Clear all</button>}
             </h2>
-            <Field label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
+            <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
               <option value="">All makes</option>
               {makeOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
-            </Field>
-            <Field label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
+            </Select>
+            <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
               <option value="">All models</option>
               {modelOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
-            </Field>
-            <Field label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); if (!SIZE_SUPPORTED.has(v.toLowerCase())) setSizeFilter(""); }}>
+            </Select>
+            <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); if (!SIZE_SUPPORTED.has(v.toLowerCase())) setSizeFilter(""); }}>
               <option value="">All body types</option>
               {bodyCounts.map(([b]) => <option key={b} value={b}>{b}</option>)}
-            </Field>
+            </Select>
             {SIZE_SUPPORTED.has(bodyFilter.toLowerCase()) && (
-              <Field label="Size" value={sizeFilter} onChange={setSizeFilter}>
+              <Select label="Size" value={sizeFilter} onChange={setSizeFilter}>
                 <option value="">Any size</option>
                 <option value="Small">Small</option>
                 <option value="Medium">Medium</option>
                 <option value="Large">Large</option>
-              </Field>
+              </Select>
             )}
             <div className="pair">
-              <Field label="Min price" value={minPrice} onChange={setMinPrice}>
+              <Select label="Min price" value={minPrice} onChange={setMinPrice}>
                 <option value="">Any</option>
                 {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-              </Field>
-              <Field label="Max price" value={maxPrice} onChange={setMaxPrice}>
+              </Select>
+              <Select label="Max price" value={maxPrice} onChange={setMaxPrice}>
                 <option value="">Any</option>
                 {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-              </Field>
+              </Select>
             </div>
             <div className="pair">
-              <Field label="Year from" value={minYear} onChange={setMinYear}>
+              <Select label="Year from" value={minYear} onChange={setMinYear}>
                 <option value="">Any</option>
                 {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
-              </Field>
-              <Field label="Year to" value={maxYear} onChange={setMaxYear}>
+              </Select>
+              <Select label="Year to" value={maxYear} onChange={setMaxYear}>
                 <option value="">Any</option>
                 {[...yearOptions].reverse().map((y) => <option key={y} value={y}>{y}</option>)}
-              </Field>
+              </Select>
             </div>
             <div className="pair">
-              <Field label="Mileage from" value={minMileage} onChange={setMinMileage}>
+              <Select label="Mileage from" value={minMileage} onChange={setMinMileage}>
                 <option value="">Any</option>
                 {MILEAGE_STEPS.map((m) => <option key={m} value={m}>{fmtN(m)}</option>)}
-              </Field>
-              <Field label="Mileage to" value={maxMileage} onChange={setMaxMileage}>
+              </Select>
+              <Select label="Mileage to" value={maxMileage} onChange={setMaxMileage}>
                 <option value="">Any</option>
                 {MILEAGE_STEPS.map((m) => <option key={m} value={m}>{fmtN(m)}</option>)}
-              </Field>
+              </Select>
             </div>
             <fieldset className="grade-options">
               <legend>Price grade</legend>
@@ -778,12 +768,9 @@ export default function CarIntelDashboard() {
                 <button className="btn-quiet filters-toggle" aria-expanded={filtersOpen} aria-controls="filters" onClick={() => setFiltersOpen((o) => !o)}>
                   Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
                 </button>
-                <label>
-                  <span className="sr-only">Sort by</span>
-                  <select value={sortKey} onChange={(e) => { setSortKey(e.target.value); setSortDir(SORTS[e.target.value].start); }}>
-                    {Object.entries(SORTS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
-                  </select>
-                </label>
+                <Select label="Sort by" hideLabel value={sortKey} onChange={(v) => { setSortKey(v); setSortDir(SORTS[v].start); }}>
+                  {Object.entries(SORTS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
+                </Select>
                 <button className="btn-quiet" title="Flip the order" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
                   <span aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
                 </button>
