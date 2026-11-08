@@ -49,29 +49,49 @@ A full rescoring pass over 14,737 listings takes 0.2 s. Writing the scores to SQ
 
 ```mermaid
 flowchart LR
-    MC[Marketcheck API] -->|scraper/data_ingest.py| DB[(SQLite car_intel.db)]
-    LD[launchd daemon on a Mac mini, daily] -->|scheduler/runner.py| SCR
-    SCR[scrape_job] --> DB
-    SCR --> TRAIN[ml_train_job]
-    TRAIN -->|ml/pipeline.py train| MODEL[(models/price_predictor.joblib)]
-    TRAIN --> SCORE[score_job]
-    SCORE -->|ml/pipeline.py score_listings| DB
-    DB -->|db/repository.py| API[Flask API - api.py]
+    LD[launchd on the Mac mini, daily 10:00] -->|scheduler/runner.py| SCR
+    subgraph RUN[run_all, one daily run]
+        direction TB
+        SCR[scrape + month-end top-up] --> VAL[data validation] --> TRAIN[train] --> SCORE[score] --> POP[popularity snapshot]
+        POP --> DEAD[dealer-site check] --> PHO[photo lookups] --> SPEC[spec lookups]
+    end
+    MC[MarketCheck API] --> SCR
+    AD[Auto.dev photos API] --> PHO
+    NH[NHTSA vPIC + Safety Ratings] --> SPEC
+    SCR & PHO & SPEC --> DB[(SQLite car_intel.db)]
+    TRAIN --> MODEL[(models/price_predictor.joblib)]
+    SCORE --> DB
+    SPEC --> AFTER[Cloudflare cache purge + healthchecks.io ping]
+    DB --> API[Flask API, api.py, gunicorn on 127.0.0.1:5001]
     MODEL -->|/api/predict| API
-    API --> WEB[React dashboard - frontend/src]
+    API -->|Cloudflare Tunnel, cars-api.danielpark.fyi| WEB[React site on Cloudflare Pages, cars.danielpark.fyi]
 ```
 
-**Ingestion** (`scraper/data_ingest.py`, `scraper/api_usage.py`) pulls active listings from the Marketcheck REST API (no HTML scraping), rotating through configured search targets (`config/search_targets.json`) and zip codes, and tracks API call quota.
+**Ingestion** (`scraper/data_ingest.py`, `scraper/api_usage.py`) pulls active listings from the MarketCheck REST API (no HTML scraping), rotating through configured search targets (`config/search_targets.json`) and zip codes, and tracks the monthly call quota. Each listing keeps the first https dealer photo MarketCheck sends.
 
-**Storage** (`db/models.py`, `db/repository.py`) is a SQLite database via SQLAlchemy with three tables: `car_listings`, `predictions`, and `popularity_snapshots`. Listings are upserted by `listing_id`; stale listings are marked inactive rather than deleted.
+**Enrichment** runs after scoring, and a failure in any of these steps never fails the run:
+- `scraper/dealer_sites.py` checks each dealer website is reachable; the API hides ads whose site is down.
+- `scraper/vehicle_photos.py` asks Auto.dev for a photo for listings MarketCheck sent without one: up to 30 calls a night (`PHOTOS_DAILY_CALLS`), newest first, inside the free plan's 1,000 a month. A VIN with no photo is retried after 14 days. A later MarketCheck photo replaces the Auto.dev one.
+- `scraper/vehicle_specs.py` fetches free NHTSA data for the listing page's spec sheet: a VIN decode (engine, safety equipment, weight), dimensions and crash-test ratings by year/make/model. Up to 300 calls a night (`SPECS_DAILY_CALLS`); `scheduler/runner.py --specs` backfills with no cap.
 
-**Scheduled retrain and rescore** (`scheduler/runner.py`) runs the scrape, train, score, and popularity-snapshot jobs in sequence, then exits. In production a launchd daemon starts it daily (see Running in production below).
+**Storage** (`db/models.py`, `db/repository.py`) is a SQLite database via SQLAlchemy:
+
+| Table | Holds |
+|---|---|
+| `car_listings` | One row per listing, upserted by `listing_id`; stale listings are marked inactive, not deleted |
+| `price_history` | A row each time a listing's price is first seen or changes (seeded 2026-11-08 with the then-current prices) |
+| `predictions` | Every scoring run's predicted price, deal score and model version |
+| `popularity_snapshots` | Daily counts and prices per year/make/model cohort |
+| `vin_specs`, `model_specs` | Cached NHTSA data, per VIN pattern and per year/make/model |
+| `vin_photos` | Which VINs Auto.dev was asked about, and whether it had a photo |
+
+**Scheduled run** (`scheduler/runner.py`) runs scrape, validation, train, score, popularity snapshot and the enrichment steps in sequence, then purges the Cloudflare cache so the site shows the new data and pings healthchecks.io, which emails if a run is late or fails. In production a launchd daemon starts it daily (see Running in production below).
 
 **Modeling** (`ml/pipeline.py`) builds engineered features (vehicle age, mileage transforms, cohort medians, luxury/body-type flags, one-hot categoricals), trains and compares the four model families above, and persists the winner with its metrics and calibration offset.
 
-**API** (`api.py`) is a Flask app that reads from SQLite and the saved model to serve deals, stats, trends, and on-demand predictions.
+**API** (`api.py`) is a Flask app that reads from SQLite and the saved model to serve deals, spec sheets, stats, trends and on-demand predictions.
 
-**Dashboard** (`frontend/src/car-intel-dashboard.jsx`) is a React app (Recharts for charts) that calls the Flask API, configured via `REACT_APP_API_URL` (defaults to `http://localhost:5001/api`).
+**Website** (`frontend/src/car-intel-dashboard.jsx`) is a React app with four views, each with its own URL: home (search and top deals), listings (filters and sort), one listing (photo, price grade, facts, spec sheet, similar cars) and price check (an estimate and range for any make, model, year and mileage). Shared parts are in `frontend/src/components/`, and the colours, fonts and motion timings are tokens in `frontend/src/theme.css`, with light and dark themes. It calls the API at `REACT_APP_API_URL` (defaults to `http://localhost:5001/api`).
 
 ### Running in production
 
@@ -79,11 +99,11 @@ The pipeline, API and dashboard run unattended on an always-on Mac mini as three
 
 | Service | launchd label | What it runs |
 |---|---|---|
-| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and daily at 10:00 local time: scrape → data validation → train → score → popularity snapshot |
-| API | `com.carintel.api` | `api.py` under gunicorn on port 5001, restarted if it exits |
+| Pipeline | `com.carintel.pipeline` | `scheduler/runner.py` at boot and daily at 10:00 local time: scrape → data validation → train → score → popularity snapshot → dealer-site check → photo lookups → spec lookups → cache purge |
+| API | `com.carintel.api` | `api.py` under gunicorn on 127.0.0.1:5001, restarted if it exits; public at https://cars-api.danielpark.fyi through a Cloudflare Tunnel |
 | Dashboard | Cloudflare Pages | https://cars.danielpark.fyi, rebuilt on every push to `main` |
 
-Each run makes up to 15 Marketcheck calls (5 each for cars, pickups and SUVs, around one of 15 rotating western-US zip codes), about 450 a month. The free plan stops at 500, and so does the scraper's monthly budget (`MARKETCHECK_MONTHLY_BUDGET`); a run that reaches it carries on with the data it has. On the last day of the month (New York time) the run repeats the scrape until the budget is spent, so calls the daily runs left unused (~50 a month, more after downtime) aren't wasted. A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and ~4 s to rescore ~13,000 listings. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. The database, model and live logs stay on the machine and are not committed.
+Each run makes up to 15 Marketcheck calls (5 each for cars, pickups and SUVs, around one of 15 rotating western-US zip codes), about 450 a month. The free plan stops at 500, and so does the scraper's monthly budget (`MARKETCHECK_MONTHLY_BUDGET`); a run that reaches it carries on with the data it has. On the last day of the month (New York time) the run repeats the scrape until the budget is spent, so calls the daily runs left unused (~50 a month, more after downtime) aren't wasted. A full run takes about 2.5 minutes: ~17 s of Marketcheck calls, ~2 min to grid-search and train the four models plus the 5 out-of-fold models, and a few seconds to rescore the active listings (~22,000 as of 2026-11-08). The photo and spec lookups then add a few minutes, paced to each API's rate limit. Each run appends one row to `logs/scrape_log.csv` (new / updated / active listings), `logs/training_log.csv` (model version, row counts, every candidate's test MAE, chosen XGBoost hyperparameters) and `logs/validation_log.csv` (data-quality counts from `db/validation.sql`). The full run log goes to `logs/launchd_stderr.log`. The database, model and live logs stay on the machine and are not committed.
 
 [`outputs/run_history/`](outputs/run_history/) is a snapshot of those three CSVs as of 2026-10-16: every scheduled run since April 2026. Timestamps are UTC. Training rows before 2026-09-29 show lower MAE because they used the retracted random, non-VIN-grouped split (see Results), and runs before 2026-10-14 used the earlier model configuration.
 
@@ -94,6 +114,7 @@ Each run makes up to 15 Marketcheck calls (5 each for cars, pickups and SUVs, ar
 | Method | Endpoint | Purpose | Example response shape |
 |---|---|---|---|
 | GET | `/api/deals` | Graded listings, best deal first. Query: `limit` (default: all), `min_score`, `make`, `model`, `body` | `[{"listing_id": "...", "year": 2021, "make": "Honda", "model": "Accord", "price": 22000, "predicted_price": 23800, "savings": 1800, "deal_score": 72.5, "deal_label": "3 Stars", "mileage": 34000, ...}]` |
+| GET | `/api/specs` | Spec sheet for one listing, from cached NHTSA data. Required: `id` (a `listing_id`). Empty list until the pipeline has fetched that car's data; 404 for an unknown id | `[{"group": "Engine", "rows": [["Power", "182 hp"], ...]}]` |
 | GET | `/api/popular` | Most-listed year/make/model cohorts. Query: `limit` | `[{"rank": 1, "year": 2022, "make": "Toyota", "model": "Camry", "active_listings": 88, "avg_price": 26500, "median_price": 25900, ...}]` |
 | GET | `/api/stats` | Global market snapshot | `{"active_listings": 12854, "graded_listings": 12843, "makes": 47, "models": 612, "avg_price": 27431.2, "price_min": 3100, "price_max": 99500, "last_updated": "2026-09-21T00:00:00Z"}` |
 | GET | `/api/trends` | Avg price by month for the top 5 makes over the last 7 months | `{"data": [{"month": "Mar", "toyota": 25100, "honda": 23900}], "makes": ["Toyota", "Honda", ...]}` |
@@ -128,6 +149,16 @@ A model saved before per-band errors existed falls back to a flat scale with 5 S
 | 60-74 | 3 Stars |
 | 45-59 | 2 Stars |
 | 0-44 | 1 Star |
+
+The website groups the same score into five plain-word grades of its own (`frontend/src/utils/scoreColor.js`), set so anything within about one typical error of the estimate reads as fair:
+
+| Score | Grade on the site |
+|---|---|
+| 90-100 | Great deal |
+| 65-89 | Good deal |
+| 35-64 | Fair price |
+| 15-34 | High price |
+| 0-14 | Overpriced |
 
 ---
 
@@ -175,7 +206,7 @@ On macOS, `deploy/macmini/setup.sh` and `install.sh` install the scheduled pipel
 
 ## Limitations and Next Steps
 
-- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split, scoring price floor, deal-score scaling, dealer-excluded cohort features), not CI. `scripts/test_marketcheck_endpoints.py` is a standalone smoke script.
+- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split, scoring price floor, deal-score scaling, cohort features, API call budget, spec sheets, photo lookups, price history) and one frontend test (`frontend/src/components/Select.test.jsx`), not CI. `scripts/test_marketcheck_endpoints.py` is a standalone smoke script.
 - The deal score is a simple linear heuristic on predicted-vs-actual price gap. It isn't calibrated against actual sale outcomes.
 - The model doesn't see vehicle condition or options data, since Marketcheck doesn't return either in structured form. This is the largest known gap versus production pricing tools.
 - Retraining depends on a single always-on machine (sleep disabled by `install.sh`); there's no failover if it's off, and no alerting if a run fails. The run log and `launchctl print` are the only signals.
@@ -196,28 +227,40 @@ Car-Price-Predictor/
 │   ├── search_targets.json       # Scrape target definitions (zip rotation, body types)
 │   └── trim_rankings.json        # Trim-level ranking data used in feature engineering
 ├── scraper/
-│   ├── data_ingest.py            # Marketcheck API client, upserts into SQLite
-│   └── api_usage.py              # API call quota tracking
+│   ├── data_ingest.py            # MarketCheck API client, upserts into SQLite
+│   ├── api_usage.py              # MarketCheck call quota tracking
+│   ├── dealer_sites.py           # Which dealer websites are down
+│   ├── vehicle_photos.py         # Auto.dev photos for listings without one
+│   └── vehicle_specs.py          # NHTSA spec sheets for the listing page
 ├── db/
-│   ├── models.py                 # SQLAlchemy models (car_listings, predictions, popularity_snapshots)
-│   └── repository.py             # Query/CRUD layer
+│   ├── models.py                 # SQLAlchemy models (the seven tables above) and the training view
+│   ├── repository.py             # Query/CRUD layer
+│   └── validation.sql            # Data-quality checks logged on every run
 ├── ml/
 │   └── pipeline.py               # Feature engineering, training, scoring, popularity snapshots
 ├── scheduler/
-│   └── runner.py                 # Orchestrates scrape -> train -> score -> popularity jobs
+│   └── runner.py                 # Orchestrates the daily run (see Architecture)
 ├── scripts/
+│   ├── holdout_audit.py          # Held-out test metrics (outputs/holdout_metrics.json)
 │   ├── model_sanity_check.py     # Directional/sanity checks on model predictions
-│   └── score_audit.py            # Deal score distribution report
+│   ├── score_audit.py            # Deal score distribution report
+│   ├── autodev_photo_trial.py    # One-off check of Auto.dev photo coverage
+│   └── ...                       # Experiments, benchmarks and endpoint smoke tests
+├── research/                     # Research notes behind data-source and model decisions
 ├── deploy/macmini/               # LaunchDaemon plists + setup/install scripts for the always-on host
 ├── outputs/
-│   └── holdout_metrics.json      # Held-out test results (scripts/holdout_audit.py)
+│   ├── holdout_metrics.json      # Held-out test results (scripts/holdout_audit.py)
+│   └── run_history/              # Snapshot of the run logs
 ├── tests/
-│   └── test_eval.py              # Assert-based checks: split, price floor, deal score, cohorts
+│   └── test_eval.py              # Assert-based checks (see Limitations)
 ├── frontend/
 │   ├── .env.example              # Frontend environment variables (REACT_APP_API_URL)
+│   ├── public/                   # index.html, theme-init.js, _headers (CSP for Cloudflare Pages)
 │   └── src/
-│       ├── car-intel-dashboard.jsx
-│       ├── components/
-│       └── utils/
+│       ├── car-intel-dashboard.jsx  # The four views and URL routing
+│       ├── theme.css             # Design tokens, light and dark
+│       ├── index.css             # Component styles
+│       ├── components/           # Listing card, deal pill, Select menu, theme toggle
+│       └── utils/                # Formatting and deal-grade helpers
 └── data/                         # Runtime state (API usage counters, scrape cursors), gitignored
 ```
