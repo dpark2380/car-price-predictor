@@ -1,70 +1,96 @@
 /**
- * Car Intel theme: tokens on :root (light) and html.theme-dark, toggled by
- * ThemeToggle; public/theme-init.js restores the saved choice before paint.
+ * Car Intel theme. Tokens live on :root;
+ * the theme follows prefers-color-scheme unless ThemeToggle sets
+ * data-theme="light|dark" on <html> (public/theme-init.js restores it before
+ * paint). The dark block is repeated: once under the media query, once under
+ * [data-theme="dark"], because CSS can't share one ruleset across both.
  *
- * Direction: a car marketplace, not a dashboard. Cool grey page, white
- * listing cards, one typeface, colour reserved for actions (petrol blue) and
- * the five deal grades. Components reference tokens only, never raw hex.
- * Text tokens meet WCAG AA (4.5:1) on --surface and --bg in both themes.
+ * Teal (--accent) marks the result: a good price, the estimate's range and
+ * focus. Deal grades reuse existing tokens, never new hues.
  */
 
 :root {
   color-scheme: light;
-  --bg: #f1f3f5;
+  --ground: #f1f1ee;
   --surface: #ffffff;
-  --surface-2: #f6f7f9;
-  --line: #dde1e6;
-  --line-strong: #c3c9d1;
-  --ink: #161a22;
-  --ink-2: #474f5c;
-  --ink-3: #5f6875;
-  --accent: #0b5394;
-  --accent-hover: #083f72;
-  --accent-soft: #e5edf6;
-  --on-accent: #ffffff;
-  --focus: #0b5394;
-  --danger: #b3261e;
-  --danger-soft: #fbe9e7;
+  --raised: #ffffff;
+  --active: #ebebe7;
+  --line: #e6e6e2;
+  --rule: #efefeb;
+  --control: #d6d6d1;
+  --ink: #151515;
+  --muted: #64645f;
+  --accent: #1b6e66;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3edeb;
+  --positive: #2e7d32;
+  --negative: #b42318;
+  --pill-negative-bg: #fdecea;
+  --pill-negative-ink: #7a1d14;
+  --pill-warning-bg: #fffbeb;
+  --pill-warning-ink: #92400e;
+  --shadow-card: 0 1px 2px rgb(20 20 15 / 0.04), 0 8px 24px -12px rgb(20 20 15 / 0.1);
 
-  /* Deal grades: text colour + tinted pill background */
-  --deal-great: #0b6e3a;  --deal-great-bg: #e1f2e8;
-  --deal-good: #2b7a2f;   --deal-good-bg: #e9f4e8;
-  --deal-fair: #474f5c;   --deal-fair-bg: #eceef1;
-  --deal-high: #9a4700;   --deal-high-bg: #fbeee1;
-  --deal-over: #b3261e;   --deal-over-bg: #fbe9e7;
-
-  --radius: 8px;
-  --shadow-card: 0 1px 2px rgba(22, 26, 34, 0.06);
+  --font-sans: "Red Hat Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Red Hat Display", var(--font-sans);
+  --font-mono: "Red Hat Mono", ui-monospace, monospace;
+  --radius-card: 16px;
+  --radius-field: 10px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --enter: 180ms;
+  --exit: 145ms;
 }
 
-html.theme-dark {
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121212;
+    --surface: #1b1b1a;
+    --raised: #1b1b1a;
+    --active: #262624;
+    --line: #2a2a28;
+    --rule: #222220;
+    --control: #454543;
+    --ink: #f1f1ee;
+    --muted: #a3a39e;
+    --accent: #4da298;
+    --accent-ink: #0d1514;
+    --accent-soft: #1c2f2d;
+    --positive: #3fc07a;
+    --negative: #e5566f;
+    --pill-negative-bg: #2c1a20;
+    --pill-negative-ink: #f0909f;
+    --pill-warning-bg: #2b2111;
+    --pill-warning-ink: #fbbf24;
+    --shadow-card: 0 0 0 1px #262624;
+  }
+}
+
+:root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #12151b;
-  --surface: #1b1f27;
-  --surface-2: #232833;
-  --line: #2f3542;
-  --line-strong: #444c5b;
-  --ink: #eceff4;
-  --ink-2: #bcc4cf;
-  --ink-3: #98a1ad;
-  --accent: #7fb0e0;
-  --accent-hover: #a3c7ea;
-  --accent-soft: #1f2d3d;
-  --on-accent: #0b1422;
-  --focus: #7fb0e0;
-  --danger: #f2948b;
-  --danger-soft: #3a1c1a;
-
-  --deal-great: #6fd39b;  --deal-great-bg: #173525;
-  --deal-good: #9bd58a;   --deal-good-bg: #1e3320;
-  --deal-fair: #bcc4cf;   --deal-fair-bg: #262b35;
-  --deal-high: #f3b673;   --deal-high-bg: #3a2817;
-  --deal-over: #f2948b;   --deal-over-bg: #3a1c1a;
-
-  --shadow-card: none;
+  --ground: #121212;
+  --surface: #1b1b1a;
+  --raised: #1b1b1a;
+  --active: #262624;
+  --line: #2a2a28;
+  --rule: #222220;
+  --control: #454543;
+  --ink: #f1f1ee;
+  --muted: #a3a39e;
+  --accent: #4da298;
+  --accent-ink: #0d1514;
+  --accent-soft: #1c2f2d;
+  --positive: #3fc07a;
+  --negative: #e5566f;
+  --pill-negative-bg: #2c1a20;
+  --pill-negative-ink: #f0909f;
+  --pill-warning-bg: #2b2111;
+  --pill-warning-ink: #fbbf24;
+  --shadow-card: 0 0 0 1px #262624;
 }
 
 body {
-  background: var(--bg);
+  background: var(--ground);
   color: var(--ink);
 }

@@ -366,6 +366,7 @@ export default function CarIntelDashboard() {
     setView("results");
   };
 
+  const wrap = view === "results" ? "wrap wide" : "wrap";
   const header = (
     <>
       {apiError && (
@@ -374,7 +375,7 @@ export default function CarIntelDashboard() {
         </div>
       )}
       <header className="site-header">
-        <div className="wrap">
+        <div className={wrap}>
           <NavLink to="home" className="brand">
             <BrandMark />
             Car Intel
@@ -391,7 +392,7 @@ export default function CarIntelDashboard() {
 
   const footer = (
     <footer className="site-footer">
-      <div className="wrap">
+      <div className={wrap}>
         <span>Grades compare each asking price with a market-value model trained on recent listings in the western US.</span>
         <span>{stats.last_updated ? `Listings updated ${fmtUpdated(stats.last_updated)}` : ""}</span>
       </div>
@@ -407,8 +408,8 @@ export default function CarIntelDashboard() {
       <>
         {header}
         <main className="wrap">
+          <h1 id="search-title" className="page-title">Search {total ? fmtN(total) : ""} used cars, each graded on price</h1>
           <section className="search-panel" aria-labelledby="search-title">
-            <h1 id="search-title">Search {total ? fmtN(total) : ""} used cars, each graded on price</h1>
             <div className="search-grid">
               <Field label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
                 <option value="">All makes</option>
@@ -426,7 +427,7 @@ export default function CarIntelDashboard() {
                 <option value="">Any price</option>
                 {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
               </Field>
-              <button className="btn btn-primary" style={{ height: 42 }} onClick={() => setView("results")}>
+              <button className="btn" onClick={() => setView("results")}>
                 {homeCount == null ? "Show cars" : `Show ${fmtN(homeCount)} cars`}
               </button>
             </div>
@@ -504,13 +505,13 @@ export default function CarIntelDashboard() {
         <>
           {header}
           <main className="wrap">
-            <a className="back-link" href={PATHS.results} onClick={goBack}>‹ Back to listings</a>
+            <a className="back-link" href={PATHS.results} onClick={goBack}>← Listings</a>
             {loading.deals ? (
               <div className="detail" aria-hidden="true"><div className="detail-photo skeleton" /><div className="panel skeleton" style={{ height: 320 }} /></div>
             ) : (
               <div className="empty" style={{ marginTop: 12 }}>
                 <p>This listing isn't in our current data. It may have sold or been taken down.</p>
-                <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={() => setView("results")}>Browse listings</button>
+                <p style={{ marginTop: 8 }}><button className="btn-link" onClick={() => setView("results")}>Browse current listings</button></p>
               </div>
             )}
           </main>
@@ -529,7 +530,7 @@ export default function CarIntelDashboard() {
       <>
         {header}
         <main className="wrap">
-          <a className="back-link" href={PATHS.results} onClick={goBack}>‹ Back to listings</a>
+          <a className="back-link" href={PATHS.results} onClick={goBack}>← Listings</a>
           <div className="detail">
             <div className="detail-photo">
               <Photo src={deal.photo_url} alt={name} />
@@ -557,7 +558,7 @@ export default function CarIntelDashboard() {
               </dl>
               {deal.url && (
                 <div style={{ marginTop: 18 }}>
-                  <a className="btn btn-primary" href={deal.url} target="_blank" rel="noopener noreferrer">
+                  <a className="btn" href={deal.url} target="_blank" rel="noopener noreferrer">
                     View on the dealer's website<span className="sr-only"> (opens in a new tab)</span>
                   </a>
                 </div>
@@ -607,9 +608,9 @@ export default function CarIntelDashboard() {
       <>
         {header}
         <main className="wrap">
+          <h1 id="pc-title" className="page-title">Check a used car's price</h1>
           <div className="pc-layout">
             <section className="panel" aria-labelledby="pc-title">
-              <h1 id="pc-title">Check a used car's price</h1>
               <form className="pc-form" onSubmit={(e) => { e.preventDefault(); runEstimate(); }}>
                 <Field label="Make" value={estMake} onChange={(v) => { setEstMake(v); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
                   <option value="">Choose a make</option>
@@ -636,7 +637,7 @@ export default function CarIntelDashboard() {
                   </label>
                 </div>
                 {estError && <div className="alert" role="alert">{estError}</div>}
-                <button className="btn btn-primary" type="submit" disabled={estLoading}>
+                <button className="btn" type="submit" disabled={estLoading}>
                   {estLoading ? "Checking…" : "Check price"}
                 </button>
               </form>
@@ -668,7 +669,7 @@ export default function CarIntelDashboard() {
                   </p>
                   {matches > 0 && (
                     <button
-                      className="btn btn-secondary"
+                      className="btn-quiet"
                       style={{ marginTop: 18 }}
                       onClick={() => showListings(() => { setMakeFilter(estMake); setModelFilter(estModel); setMinYear(String(estYear)); setMaxYear(String(estYear)); })}
                     >
@@ -699,7 +700,7 @@ export default function CarIntelDashboard() {
   return (
     <>
       {header}
-      <main className="wrap">
+      <main className={wrap}>
         <div className="listings-layout">
           <aside className={`filters-panel${filtersOpen ? " open" : ""}`} id="filters" aria-label="Filters">
             <h2>
@@ -769,12 +770,12 @@ export default function CarIntelDashboard() {
 
           <section aria-labelledby="results-title">
             <div className="results-bar">
-              <h1 id="results-title">
+              <h1 id="results-title" className="page-title">
                 Used cars
                 <span className="num" role="status">{loading.deals ? "Loading…" : `${fmtN(filteredDeals.length)} results`}</span>
               </h1>
               <div className="results-tools">
-                <button className="btn btn-secondary filters-toggle" aria-expanded={filtersOpen} aria-controls="filters" onClick={() => setFiltersOpen((o) => !o)}>
+                <button className="btn-quiet filters-toggle" aria-expanded={filtersOpen} aria-controls="filters" onClick={() => setFiltersOpen((o) => !o)}>
                   Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
                 </button>
                 <label>
@@ -783,7 +784,7 @@ export default function CarIntelDashboard() {
                     {Object.entries(SORTS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
                   </select>
                 </label>
-                <button className="btn btn-secondary" title="Flip the order" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
+                <button className="btn-quiet" title="Flip the order" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
                   <span aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
                 </button>
               </div>
@@ -794,7 +795,7 @@ export default function CarIntelDashboard() {
             ) : !cards.length ? (
               <div className="empty">
                 <p>No cars match these filters.</p>
-                {anyFilter && <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={resetFilters}>Clear filters</button>}
+                {anyFilter && <p style={{ marginTop: 8 }}>Widen the price or year range, or <button className="btn-link" onClick={resetFilters}>clear all filters</button>.</p>}
               </div>
             ) : (
               <div className="card-grid">
@@ -804,8 +805,8 @@ export default function CarIntelDashboard() {
 
             {!loading.deals && visibleCount < filteredDeals.length && (
               <div style={{ textAlign: "center", marginTop: 20 }}>
-                <button className="btn btn-secondary" onClick={() => setVisibleCount((v) => v + 60)}>
-                  Show more cars <span className="num" style={{ fontWeight: 400, color: "var(--ink-3)" }}>({fmtN(filteredDeals.length - visibleCount)} more)</span>
+                <button className="btn-quiet" onClick={() => setVisibleCount((v) => v + 60)}>
+                  Show more cars <span className="num" style={{ fontWeight: 400, color: "var(--muted)" }}>({fmtN(filteredDeals.length - visibleCount)} more)</span>
                 </button>
               </div>
             )}
