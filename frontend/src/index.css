@@ -63,9 +63,29 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .btn-link { background: none; border: none; padding: 6px 0; margin: -6px 0; color: var(--ink); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field > span { font-size: 14px; font-weight: 500; }
-.field select, .field input, .results-tools select { height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--surface); width: 100%; font-size: 14px; }
-.field select:focus, .field input:focus, .results-tools select:focus { outline: none; border-color: var(--ink); }
-.field select:disabled { opacity: 0.4; }
+.field input, .select-btn { height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius-field); background: var(--surface); width: 100%; font-size: 14px; }
+.field input:focus, .select-btn:focus-visible, .select-btn[aria-expanded="true"] { outline: none; border-color: var(--ink); }
+
+/* Select: a field-shaped button that opens a menu in the top layer. */
+.select-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; text-align: left; cursor: pointer; }
+.select-btn > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-btn svg { flex-shrink: 0; color: var(--muted); }
+.select-btn:disabled { opacity: 0.4; cursor: default; }
+.select-btn:active:not(:disabled) { scale: none; } /* a field doesn't dip; the menu is placed from its size */
+.menu {
+  inset: auto; margin: 0; padding: 6px 0; width: max-content; max-width: calc(100vw - 16px); max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--control); border-radius: 12px; background: var(--raised); color: var(--ink); list-style: none; font-size: 14px;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  transform-origin: var(--origin, top left); opacity: 0; scale: 0.95;
+  transition: opacity var(--exit) var(--ease-out), scale var(--exit) var(--ease-out), display var(--exit) allow-discrete, overlay var(--exit) allow-discrete;
+}
+.menu:popover-open { opacity: 1; scale: 1; transition-duration: var(--enter); }
+@starting-style { .menu:popover-open { opacity: 0; scale: 0.95; } }
+.menu:focus-visible { outline: none; }
+.menu li { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 32px; padding: 6px 14px; cursor: pointer; white-space: nowrap; }
+.menu li.active { background: var(--active); }
+.menu li svg { color: var(--accent); }
+@media (pointer: coarse) { .menu li { min-height: 40px; } }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .alert { background: var(--pill-negative-bg); color: var(--pill-negative-ink); border-radius: var(--radius-field); padding: 10px 14px; font-size: 14px; }
 /* Keeps iOS from zooming into a field; pinch zoom still works. */
@@ -178,7 +198,7 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .results-bar .page-title { margin: 0; }
 .results-bar h1 span { font-family: var(--font-sans); font-weight: 400; letter-spacing: 0; color: var(--muted); font-size: 15px; margin-left: 8px; }
 .results-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.results-tools select { width: auto; }
+.results-tools .field { width: auto; }
 .filters-toggle { display: none; }
 .empty { background: var(--surface); border-radius: var(--radius-card); padding: 40px; text-align: center; color: var(--muted); box-shadow: var(--shadow-card); }
 @media (max-width: 900px) {
