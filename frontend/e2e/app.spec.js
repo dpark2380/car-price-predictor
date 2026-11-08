@@ -76,3 +76,30 @@ test("the theme toggle switches to dark and survives a reload", async ({ page })
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.getByRole("button", { name: "Use light theme" })).toBeVisible();
 });
+
+test("cars without a photo get a short band, and the photo filter hides them", async ({ page }) => {
+  await page.goto("/listings");
+  const noPhoto = page.locator(".card").filter({ hasText: "2018 Toyota Corolla" });
+  await expect(noPhoto.getByText("No photo available")).toBeVisible();
+  const box = await noPhoto.locator(".card-photo").boundingBox();
+  expect(box.height / box.width).toBeLessThan(0.45); // 16:6, not the 16:10 photo box
+  if (await page.getByRole("button", { name: /^Filters/ }).isVisible()) {
+    await page.getByRole("button", { name: /^Filters/ }).click();
+  }
+  await page.getByLabel("Only cars with a photo").check();
+  await expect(page.getByRole("status")).toHaveText("2 results");
+  await expect(page).toHaveURL(/photo=1/);
+});
+
+test("a shared price-check link shows its car and progress while data loads", async ({ page }) => {
+  // Hold the full listings list so the dropdown options aren't there yet.
+  await page.route("http://localhost:5001/api/deals?min_score=0", async (route) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    await route.fallback();
+  });
+  await page.goto("/price-check?make=honda&model=accord&year=2020&mileage=40000");
+  // Before the listings arrive (1.5 s), the dropdowns already show the car from the link.
+  await expect(page.getByRole("button", { name: /^Make/ })).toHaveText("Honda", { timeout: 1000 });
+  await expect(page.getByRole("button", { name: /^Model/ })).toHaveText("Accord", { timeout: 1000 });
+  await expect(page.locator(".pc-result .value")).toHaveText("$21,300");
+});

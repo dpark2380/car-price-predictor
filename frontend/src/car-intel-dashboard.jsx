@@ -46,6 +46,8 @@ const GRADE_MEANINGS = [
   [5, "Well above what similar cars list for."],
 ];
 
+// A value from the URL stays selectable before the listings that supply its options arrive.
+const keep = (opts, v) => (v && !opts.some((o) => String(o) === String(v)) ? [...opts, v] : opts);
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const fmtUpdated = (iso) =>
   new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -81,6 +83,7 @@ function fromUrlParams(q, view) {
     yearFrom: get("year_from"), yearTo: get("year_to"),
     milesFrom: get("miles_from"), milesTo: get("miles_to"),
     grade: [1, 3, 4, 5].includes(grade) ? grade : 1,
+    photo: get("photo") === "1",
     sortKey, sortDir: dir === "asc" || dir === "desc" ? dir : SORTS[sortKey].start,
     year: get("year"), mileage: get("mileage"),
   };
@@ -120,6 +123,7 @@ export default function CarIntelDashboard() {
   const [minMileage, setMinMileage] = useState(initial.milesFrom);
   const [maxMileage, setMaxMileage] = useState(initial.milesTo);
   const [minStars, setMinStars] = useState(initial.grade);
+  const [photoOnly, setPhotoOnly] = useState(initial.photo);
   const [sortKey, setSortKey] = useState(initial.sortKey);
   const [sortDir, setSortDir] = useState(initial.sortDir);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -214,6 +218,7 @@ export default function CarIntelDashboard() {
     const arr = deals
       .filter((d) => d.deal_score != null)
       .filter((d) => dealTier(d.deal_score) >= minStars)
+      .filter((d) => !photoOnly || d.photo_url)
       .filter((d) => !makeFilter || d.make?.toLowerCase() === makeFilter)
       .filter((d) => !modelFilter || d.model?.toLowerCase() === modelFilter)
       .filter((d) => !bodyFilter || normalizeBodyType(d.body_type).toLowerCase() === bodyFilter.toLowerCase())
@@ -243,13 +248,13 @@ export default function CarIntelDashboard() {
       if (x === null || y === null) return (x === null) - (y === null);
       return x === y ? num(b.deal_score) - num(a.deal_score) : (x - y) * dir;
     });
-  }, [deals, minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
+  }, [deals, minStars, photoOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
   // Thousands of cards at once would make the page sluggish: render a slice.
-  useEffect(() => setVisibleCount(60), [minStars, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
+  useEffect(() => setVisibleCount(60), [minStars, photoOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
-  const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minPrice || maxPrice || minYear || maxYear || minMileage || maxMileage || minStars > 1;
-  const activeFilterCount = [makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice || maxPrice, minYear || maxYear, minMileage || maxMileage, minStars > 1].filter(Boolean).length;
+  const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minPrice || maxPrice || minYear || maxYear || minMileage || maxMileage || minStars > 1 || photoOnly;
+  const activeFilterCount = [makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice || maxPrice, minYear || maxYear, minMileage || maxMileage, minStars > 1, photoOnly].filter(Boolean).length;
 
   // Keep the address bar in step with the view and its inputs. A new view is
   // a history entry (Back returns to it); input changes replace the current
@@ -257,7 +262,7 @@ export default function CarIntelDashboard() {
   useEffect(() => {
     const url =
       view === "results"
-        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== SORTS[sortKey].start ? sortDir : "" })
+        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", photo: photoOnly ? "1" : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== SORTS[sortKey].start ? sortDir : "" })
         : view === "estimator"
         ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
         : view === "listing"
@@ -270,7 +275,7 @@ export default function CarIntelDashboard() {
     } else {
       window.history.replaceState(null, "", url);
     }
-  }, [view, listingId, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
+  }, [view, listingId, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, photoOnly, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
 
   useEffect(() => {
     document.title = PAGE_TITLES[view];
@@ -285,7 +290,7 @@ export default function CarIntelDashboard() {
       if (u.view === "results") {
         setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
         setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
-        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setSortKey(u.sortKey); setSortDir(u.sortDir);
+        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setSortKey(u.sortKey); setSortDir(u.sortDir);
       } else if (u.view === "estimator") {
         setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
       }
@@ -325,7 +330,7 @@ export default function CarIntelDashboard() {
   const resetFilters = () => {
     setMakeFilter(""); setModelFilter(""); setSizeFilter(""); setBodyFilter("");
     setMinPrice(""); setMaxPrice(""); setMinYear(""); setMaxYear("");
-    setMinMileage(""); setMaxMileage(""); setMinStars(1);
+    setMinMileage(""); setMaxMileage(""); setMinStars(1); setPhotoOnly(false);
   };
 
   // Real links (middle-click and copy work) that switch views in place.
@@ -364,6 +369,9 @@ export default function CarIntelDashboard() {
           Listings can't load right now. Check your connection, then refresh the page in a minute.
         </div>
       )}
+      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); document.getElementById("main")?.focus(); }}>
+        Skip to content
+      </a>
       <header className="site-header">
         <div className={wrap}>
           <NavLink to="home" className="brand">
@@ -397,17 +405,17 @@ export default function CarIntelDashboard() {
     return (
       <>
         {header}
-        <main className="wrap">
+        <main className="wrap" id="main" tabIndex={-1}>
           <h1 id="search-title" className="page-title">Search {total ? fmtN(total) : ""} used cars, each graded on price</h1>
           <section className="search-panel" aria-labelledby="search-title">
             <div className="search-grid">
               <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
                 <option value="">All makes</option>
-                {makeOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
               </Select>
               <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
                 <option value="">All models</option>
-                {modelOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
               </Select>
               <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); setSizeFilter(""); }}>
                 <option value="">All body types</option>
@@ -494,7 +502,7 @@ export default function CarIntelDashboard() {
       return (
         <>
           {header}
-          <main className="wrap">
+          <main className="wrap" id="main" tabIndex={-1}>
             <a className="back-link" href={PATHS.results} onClick={goBack}>← Listings</a>
             {loading.deals ? (
               <div className="detail" aria-hidden="true"><div className="detail-photo skeleton" /><div className="panel skeleton" style={{ height: 320 }} /></div>
@@ -519,7 +527,7 @@ export default function CarIntelDashboard() {
     return (
       <>
         {header}
-        <main className="wrap">
+        <main className="wrap" id="main" tabIndex={-1}>
           <a className="back-link" href={PATHS.results} onClick={goBack}>← Listings</a>
           <div className="detail">
             <div className="detail-photo">
@@ -597,23 +605,23 @@ export default function CarIntelDashboard() {
     return (
       <>
         {header}
-        <main className="wrap">
+        <main className="wrap" id="main" tabIndex={-1}>
           <h1 id="pc-title" className="page-title">Check a used car's price</h1>
           <div className="pc-layout">
             <section className="panel" aria-labelledby="pc-title">
               <form className="pc-form" onSubmit={(e) => { e.preventDefault(); runEstimate(); }}>
                 <Select label="Make" value={estMake} onChange={(v) => { setEstMake(v); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
                   <option value="">Choose a make</option>
-                  {makeOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                  {keep(makeOptions, estMake).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
                 </Select>
                 <Select label="Model" value={estModel} onChange={(v) => { setEstModel(v); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
                   <option value="">Choose a model</option>
-                  {estModelOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                  {keep(estModelOptions, estModel).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
                 </Select>
-                {estTrimOptions.length > 0 && (
+                {keep(estTrimOptions, estTrim).length > 0 && (
                   <Select label="Trim (optional)" value={estTrim} onChange={(v) => { setEstTrim(v); setEstResult(null); }}>
                     <option value="">Any trim</option>
-                    {estTrimOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {keep(estTrimOptions, estTrim).map((t) => <option key={t} value={t}>{t}</option>)}
                   </Select>
                 )}
                 <div className="pair">
@@ -671,7 +679,9 @@ export default function CarIntelDashboard() {
                 <>
                   <h2 id="pc-result-title" className="label">Your estimate</h2>
                   <p className="note" style={{ marginTop: 8 }}>
+                    {estLoading ? "Checking the price…" : <>
                     Enter a car to see what similar ones are listed for and the range most of them fall in. Use it to judge an ad, or to price your own car.
+                  </>}
                   </p>
                 </>
               )}
@@ -690,7 +700,7 @@ export default function CarIntelDashboard() {
   return (
     <>
       {header}
-      <main className={wrap}>
+      <main className={wrap} id="main" tabIndex={-1}>
         <div className="listings-layout">
           <aside className={`filters-panel${filtersOpen ? " open" : ""}`} id="filters" aria-label="Filters">
             <h2>
@@ -699,11 +709,11 @@ export default function CarIntelDashboard() {
             </h2>
             <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
               <option value="">All makes</option>
-              {makeOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+              {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
             </Select>
             <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
               <option value="">All models</option>
-              {modelOptions.map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+              {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
             </Select>
             <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); if (!SIZE_SUPPORTED.has(v.toLowerCase())) setSizeFilter(""); }}>
               <option value="">All body types</option>
@@ -730,11 +740,11 @@ export default function CarIntelDashboard() {
             <div className="pair">
               <Select label="Year from" value={minYear} onChange={setMinYear}>
                 <option value="">Any</option>
-                {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+                {keep(yearOptions, minYear).map((y) => <option key={y} value={y}>{y}</option>)}
               </Select>
               <Select label="Year to" value={maxYear} onChange={setMaxYear}>
                 <option value="">Any</option>
-                {[...yearOptions].reverse().map((y) => <option key={y} value={y}>{y}</option>)}
+                {[...keep(yearOptions, maxYear)].reverse().map((y) => <option key={y} value={y}>{y}</option>)}
               </Select>
             </div>
             <div className="pair">
@@ -756,12 +766,16 @@ export default function CarIntelDashboard() {
                 </label>
               ))}
             </fieldset>
+            <label className="check-option">
+              <input type="checkbox" checked={photoOnly} onChange={(e) => setPhotoOnly(e.target.checked)} />
+              Only cars with a photo
+            </label>
           </aside>
 
           <section aria-labelledby="results-title">
             <div className="results-bar">
               <h1 id="results-title" className="page-title">
-                Used cars
+                Used cars{" "}
                 <span className="num" role="status">{loading.deals ? "Loading…" : `${fmtN(filteredDeals.length)} results`}</span>
               </h1>
               <div className="results-tools">
@@ -786,7 +800,7 @@ export default function CarIntelDashboard() {
               </div>
             ) : (
               <div className="card-grid">
-                {cards.map((d) => <ListingCard key={d.listing_id} {...cardProps(d)} />)}
+                {cards.map((d) => <ListingCard key={d.listing_id} level={2} {...cardProps(d)} />)}
               </div>
             )}
 

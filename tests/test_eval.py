@@ -230,6 +230,11 @@ def test_map_listing_keeps_first_https_photo():
     assert map_listing({**raw, "media": cached})["photo_url"] is None
     stub = {"photo_links": ["https://dealer.example/img/vehicle-image-notavailable-320x240.jpg", "https://cdn.example/2.jpg"]}
     assert map_listing({**raw, "media": stub})["photo_url"] == "https://cdn.example/2.jpg"
+    for stand_in in ["https://d.example/wp-content/plugins/inventory/images/notfound.jpg",
+                     "https://d.example/missing/photo_unavailable_640.png",
+                     "https://imagescdn.dealercarsearch.com/DealerImages/1130/1130_newarrivalphoto.jpg",
+                     "https://static.goxeedealer.com/images/na/napic_944_gt.png"]:
+        assert map_listing({**raw, "media": {"photo_links": [stand_in]}})["photo_url"] is None, stand_in
 
 
 def test_map_listing_free_fields():
