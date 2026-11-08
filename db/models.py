@@ -59,6 +59,16 @@ class CarListing(Base):
         Index("ix_active", "is_active"),
     )
 
+# One row each time a listing's asking price is first seen or changes
+# (ListingRepository.upsert_listings). Rows before 2026-11-08 were seeded with
+# the price as of last_seen, so earlier cuts appear only via ref_price.
+class PriceHistory(Base):
+    __tablename__ = "price_history"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    listing_id = Column(String, index=True, nullable=False)
+    price      = Column(Float, nullable=False)
+    seen_at    = Column(DateTime, default=datetime.utcnow)
+
 class Prediction(Base):
     __tablename__ = "predictions"
     id              = Column(Integer, primary_key=True, autoincrement=True)
