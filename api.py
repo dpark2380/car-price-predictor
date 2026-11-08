@@ -16,6 +16,7 @@ from werkzeug.exceptions import HTTPException
 
 from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
+from scraper import vehicle_specs
 
 app = Flask(__name__)
 # Browsers may call the API only from the public dashboard, the Mac mini's LAN
@@ -245,6 +246,21 @@ def deals():
     elif body_q:
         rows = [r for r in rows if body_q in (r["body_type"] or "").lower()]
     return jsonify(rows[:limit] if limit else rows)
+
+
+@app.route("/api/specs")
+@db_cached("id", maxsize=256)
+def specs():
+    """Spec sheet for one listing, carsales-style: [{group, rows: [[label, value]]}].
+    Empty until the pipeline has fetched that car's NHTSA data. Query param: id."""
+    session = get_db()
+    try:
+        sheet = vehicle_specs.sheet_for(session, request.args.get("id", "")[:200])
+    finally:
+        session.close()
+    if sheet is None:
+        abort(404, "no such listing")
+    return jsonify(sheet)
 
 
 @app.route("/api/popular")

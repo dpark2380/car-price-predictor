@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float,
-    DateTime, Text, Index, text
+    DateTime, Text, Index, UniqueConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -83,6 +83,26 @@ class PopularitySnapshot(Base):
     avg_mileage     = Column(Float)
     avg_days_listed = Column(Float)
     sold_last_7d    = Column(Integer, default=0)
+
+# Free NHTSA specs for the listing detail page (scraper/vehicle_specs.py), raw
+# JSON. ponytail: never refreshed; NHTSA data rarely changes. Add a max age if
+# re-decodes start to matter.
+class VinSpecs(Base):
+    __tablename__ = "vin_specs"
+    squish     = Column(String, primary_key=True)   # VIN chars 1-8 + 10
+    data       = Column(Text)                       # vPIC fields, {} if none
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+class ModelSpecs(Base):
+    __tablename__ = "model_specs"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    year       = Column(Integer, nullable=False)
+    make       = Column(String, nullable=False)     # lowercase
+    model      = Column(String, nullable=False)     # lowercase
+    dims       = Column(Text)                       # Canadian spec groups
+    ratings    = Column(Text)                       # rated variants
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("year", "make", "model"),)
 
 
 DB_PATH = "sqlite:///car_intel.db"
