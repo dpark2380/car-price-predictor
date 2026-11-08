@@ -173,7 +173,8 @@ def _sync_views(engine) -> None:
 
 
 def init_db(db_url: str = DB_PATH):
-    engine = create_engine(db_url, echo=False)
+    # 30 s lock wait (default 5): API reads can briefly block a long backfill's commits
+    engine = create_engine(db_url, echo=False, connect_args={"timeout": 30})
     Base.metadata.create_all(engine)
     _add_missing_columns(engine)
     _sync_views(engine)
