@@ -104,7 +104,9 @@ export function Select({ label, hideLabel, value, onChange, disabled, children }
         onKeyDown={(e) => {
           if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
-            listRef.current.showPopover?.();
+            // Focus now, not in the toggle event, so a fast next key reaches the list.
+            if (!listRef.current.matches?.(":popover-open")) listRef.current.showPopover?.();
+            listRef.current.focus();
           }
         }}
       >

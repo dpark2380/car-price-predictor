@@ -39,3 +39,7 @@ security_audit.md
 
 # Claude Code local config and skills
 .claude/
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
