@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from db.models import CarListing, Prediction, PopularitySnapshot, MIN_PRICE
+from db.models import CarListing, Prediction, PopularitySnapshot, PriceHistory, MIN_PRICE
 
 
 # ── Listings ──────────────────────────────────────────────────────────────────
@@ -49,6 +49,10 @@ class ListingRepository:
                 existing.last_seen = now
                 existing.is_active = 1
 
+                price = data.get("price")
+                if price is not None and price != existing.price:
+                    self.session.add(PriceHistory(listing_id=listing_id, price=price, seen_at=now))
+
                 # Only mutable fields that can legitimately change between scrapes:
                 # price (dealer reductions), mileage (odometer corrections),
                 # days_listed from API dom (reflects actual market age),
@@ -73,6 +77,8 @@ class ListingRepository:
                 try:
                     listing = CarListing(**{k: v for k, v in data.items() if hasattr(CarListing, k)})
                     self.session.add(listing)
+                    if data.get("price") is not None:
+                        self.session.add(PriceHistory(listing_id=listing_id, price=data["price"], seen_at=now))
                     inserted += 1
                 except Exception as e:
                     logger.warning(f"Failed to add listing {listing_id}: {e}")

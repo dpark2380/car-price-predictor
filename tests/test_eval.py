@@ -317,6 +317,18 @@ def test_autodev_photos_fill_once():
         else: os.environ["AUTODEV_API_KEY"] = saved[2]
 
 
+def test_price_history_records_changes():
+    from db.models import PriceHistory
+    session = get_session(init_db("sqlite://"))
+    repo = ListingRepository(session)
+    car = {"listing_id": "P1", "vin": "1HGCM82633A004352", "make": "Honda", "model": "Accord", "year": 2019}
+    repo.upsert_listings([{**car, "price": 12000}])
+    repo.upsert_listings([{**car, "price": 12000}])   # unchanged: no new row
+    repo.upsert_listings([{**car, "price": 11500}])
+    repo.upsert_listings([{**car}])                   # price missing: no row
+    assert [p for (p,) in session.query(PriceHistory.price).order_by(PriceHistory.id)] == [12000, 11500]
+
+
 if __name__ == "__main__":
     test_vin_split_disjoint()
     test_price_floor()
@@ -335,4 +347,5 @@ if __name__ == "__main__":
     test_dealer_sites_round_trip_and_host()
     test_scrape_call_is_logged()
     test_autodev_photos_fill_once()
+    test_price_history_records_changes()
     print("ok")
