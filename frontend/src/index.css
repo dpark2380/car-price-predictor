@@ -118,6 +118,11 @@ a { color: var(--accent); }
 .facts { display: grid; grid-template-columns: auto 1fr; gap: 8px 18px; margin-top: 18px; font-size: 14.5px; }
 .facts dt { color: var(--ink-3); }
 .facts dd { margin: 0; font-weight: 500; }
+.specs { padding: 8px 24px 16px; }
+.specs details { border-bottom: 1px solid var(--line); padding: 14px 0; }
+.specs summary { cursor: pointer; font-weight: 600; font-size: 16px; }
+.specs .facts { margin-top: 12px; }
+.specs-note { margin-top: 14px; font-size: 13px; color: var(--ink-3); }
 .skeleton { background: var(--surface-2); border-radius: 4px; animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }

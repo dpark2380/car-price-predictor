@@ -1,7 +1,8 @@
 """
 scheduler/runner.py — Runs scrape → train → score → popularity once, then exits.
 
-No flag runs all four; --scrape-only / --train-only / --score-only run one.
+No flag runs all four; --scrape-only / --train-only / --score-only run one;
+--specs backfills detail-page specs from NHTSA.
 Scheduling lives outside this script (launchd, see deploy/macmini/).
 """
 
@@ -19,7 +20,7 @@ from db.repository import ListingRepository, PredictionRepository, PopularityRep
 from db.validation import run_validation
 from scraper.api_usage import NY_TZ, month_total
 from scraper.data_ingest import DataIngestor, MONTHLY_CALL_BUDGET
-from scraper import dealer_sites
+from scraper import dealer_sites, vehicle_specs
 from ml import pipeline
 from env_utils import env_int
 
@@ -34,6 +35,10 @@ LOGS_DIR = Path("logs")
 # again is reactivated on upsert. Display only: training and scoring use
 # every listing seen in the last 180 days, active or not.
 INACTIVE_AFTER_DAYS = env_int("INACTIVE_AFTER_DAYS", 60)
+# Free NHTSA calls per daily run for detail-page specs: ~460 new VINs a day need
+# ~10 batch calls plus a few calls per new year/make/model. `--specs` backfills
+# with no cap.
+SPECS_DAILY_CALLS = env_int("SPECS_DAILY_CALLS", 300)
 
 # ── Persistent run logging ────────────────────────────────────────────────────
 
@@ -226,6 +231,12 @@ def dealer_check_job(repo: ListingRepository):
     logger.info(f"▶ Dealer sites checked: {len(down)} of {len(hosts)} unreachable")
 
 
+def specs_job(repo: ListingRepository, max_calls: int | None):
+    """Fetch free NHTSA specs for active listings that lack them."""
+    calls = vehicle_specs.fill_missing(repo.session, max_calls)
+    logger.info(f"▶ Specs job done: {calls} NHTSA calls")
+
+
 def run_all(engine):
     session = get_session(engine)
     repo = ListingRepository(session)
@@ -241,6 +252,11 @@ def run_all(engine):
             dealer_check_job(repo)
         except Exception as e:  # never fail the run over a link check
             logger.warning(f"Dealer site check failed: {e}")
+        try:
+            specs_job(repo, SPECS_DAILY_CALLS)
+        except Exception as e:  # specs are a nice-to-have on the detail page
+            repo.session.rollback()
+            logger.warning(f"Specs job failed: {e}")
     finally:
         session.close()
 
@@ -251,6 +267,7 @@ def main():
     parser.add_argument("--train-only", action="store_true")
     parser.add_argument("--score-only", action="store_true")
     parser.add_argument("--check-dealers", action="store_true")
+    parser.add_argument("--specs", action="store_true", help="backfill NHTSA specs, no call cap")
     args = parser.parse_args()
 
     engine = init_db()
@@ -271,6 +288,14 @@ def main():
         try:
             repo = ListingRepository(session)
             ml_train_job(repo)
+        finally:
+            session.close()
+        return
+
+    if args.specs:
+        session = get_session(engine)
+        try:
+            specs_job(ListingRepository(session), None)
         finally:
             session.close()
         return

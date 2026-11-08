@@ -67,6 +67,31 @@ def test_hold_back_stale_price_cut():
     assert _hold_back(70.0, 120, -8.0) == 70.0            # only caps 5 Stars
 
 
+def test_spec_sheet():
+    from scraper.vehicle_specs import build_spec_sheet, squish
+    assert squish("4T1B11HK5KU123456") == "4T1B11HKK"
+    listing = {"trim": "XLE", "drivetrain": "AWD", "body_type": "SUV", "engine_size": 2.5,
+               "cylinders": 4, "city_mpg": 27.0, "highway_mpg": None, "doors": float("nan")}
+    vin = {"EngineHP": "203", "ABS": "Standard", "CurbWeightLB": "3572", "PlantCountry": "UNITED STATES (USA)"}
+    model = {"dims": [{"name": "RAV4 4DR SUV FWD", "OL": "180.9"},
+                      {"name": "RAV4 4DR SUV AWD XLE", "OL": "181.0", "WD": "57/43"}],
+             "ratings": [{"name": "2019 Toyota RAV4 SUV FWD", "OverallRating": "4"},
+                         {"name": "2019 Toyota RAV4 SUV AWD", "OverallRating": "5"}]}
+    sheet = build_spec_sheet(listing, vin, model)
+    groups = [g["group"] for g in sheet]
+    assert groups == ["Safety & Security", "Engine", "Transmission & Drivetrain", "Fuel",
+                      "Dimensions & Weights", "Other"]  # carsales order, empty groups left out
+    rows = {label: value for g in sheet for label, value in g["rows"]}
+    assert rows["NHTSA overall rating"] == "5 / 5 stars"         # AWD variant picked
+    assert rows["Length"] == "181.0 in"                          # trim + drive group picked
+    assert rows["Weight distribution"] == "57% front / 43% rear"
+    assert rows["Power"] == "203 hp" and rows["Curb weight"] == "3,572 lb" and rows["City"] == "27 mpg"
+    assert rows["Built in"] == "United States"
+    assert "Highway" not in rows and "Doors" not in rows         # missing values left out
+    other = build_spec_sheet({"trim": "LE", "drivetrain": "RWD"}, {}, model)
+    assert {l: v for g in other for l, v in g["rows"]}["Length"] == "180.9 in"  # no match -> first
+
+
 def test_segment_errors():
     true = np.array([5000.0] * 40 + [25000.0] * 40 + [80000.0] * 3)
     pred = true * np.array([1.2] * 40 + [1.05] * 40 + [1.5] * 3)
@@ -264,6 +289,7 @@ if __name__ == "__main__":
     test_price_floor()
     test_deal_score_scales_with_segment_error()
     test_hold_back_stale_price_cut()
+    test_spec_sheet()
     test_segment_errors()
     test_cohort_features_exclude_own_dealer()
     test_comp_price_uses_nearest_other_dealer_cars()

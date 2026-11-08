@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
 import { BrandMark, CardSkeleton, DealPill, ListingCard, Photo, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
@@ -116,6 +116,7 @@ export default function CarIntelDashboard() {
   const initial = useMemo(fromUrl, []);
   const [view, setView] = useState(initial.view); // "home" | "results" | "estimator" | "listing"
   const [listingId, setListingId] = useState(initial.listingId);
+  const [specs, setSpecs] = useState([]);
 
   const isRes = initial.view === "results";
   const [makeFilter, setMakeFilter] = useState(isRes ? initial.make : "");
@@ -180,6 +181,18 @@ export default function CarIntelDashboard() {
     load("deals", `${API}/deals?min_score=0`, (rows) => setDeals(clean(rows)));
     load("stats", `${API}/stats`, setStats);
   }, []);
+
+  // Spec sheet for the open listing: NHTSA data, empty until the pipeline has fetched it.
+  useEffect(() => {
+    setSpecs([]);
+    if (view !== "listing" || !listingId) return;
+    let live = true;
+    fetch(`${API}/specs?id=${encodeURIComponent(listingId)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((s) => live && setSpecs(s))
+      .catch(() => {});
+    return () => { live = false; };
+  }, [view, listingId]);
 
   const optionsFor = (rows, key) => Array.from(new Set(rows.map((d) => d[key]?.toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const makeOptions = useMemo(() => optionsFor(deals, "make"), [deals]);
@@ -551,6 +564,23 @@ export default function CarIntelDashboard() {
               )}
             </section>
           </div>
+
+          {specs.length > 0 && (
+            <section className="section" aria-labelledby="specs-title">
+              <div className="section-head"><h2 id="specs-title">Specifications</h2></div>
+              <div className="panel specs">
+                {specs.map((g, i) => (
+                  <details key={g.group} open={i === 0}>
+                    <summary>{g.group}</summary>
+                    <dl className="facts">
+                      {g.rows.map(([label, value]) => <Fragment key={label}><dt>{label}</dt><dd>{value}</dd></Fragment>)}
+                    </dl>
+                  </details>
+                ))}
+                <p className="specs-note">Model specs from NHTSA. Confirm details with the dealer.</p>
+              </div>
+            </section>
+          )}
 
           {similar.length > 0 && (
             <section className="section" aria-labelledby="similar-title">
