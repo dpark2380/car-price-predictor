@@ -245,14 +245,29 @@ Our volumes: 7,433 active trims, 2,739 trims among 4–5 star deals, 3,920 activ
    - Match trims on engine, drivetrain and transmission, not the trim string.
 4. **Skip CarVector.**
 
+## Free-tier coverage probe (2026-11-08)
+
+`scripts/specs_coverage.py` checked our 30 most common active year/make/models (2,617 of 22,074 active listings, 12%). It used 26 CarSpecsAPI calls and 36 of RevCarData's 100 a month. Responses are cached in `data/specs_probe.json`.
+
+| Source | Listings covered | Notes |
+|---|---|---|
+| CarSpecsAPI (make → model → generation) | 69% | Misses: generation year gaps (2025 Rogue, 2020/2021 Silverado 1500, 2017 Tacoma, 2023 XC40) and all Ram trucks. The Ram misses are partly our naming ("Ram 1500 Pickup"). Trim specs are paid-only, so field quality is unchecked. |
+| RevCarData (`/vehicles?region=US`) | 13% | Only 3 of 30 matched: the 2025 Compass and the 2021 and 2023 F-150. No 2025 Camry, Altima, Sentra, Rogue, Silverado or Tacoma. |
+
+- **RevCarData's free key returns full `/core` and `/premium` data:** hp, torque, transmission, drive, L/W/H, weight, cargo, MSRP and 0–100 km/h.
+- **RevCarData's values are unreliable for the 2025 Jeep Compass Latitude.** It lists 180 hp, a CVT and an 11.4 kWh battery. The US car has 200 hp and an 8-speed automatic, and the 11.4 kWh battery belongs to the plug-in 4xe. The F-150 PowerBoost row looks right (430 hp, 773 Nm, 10-speed), but gives a pickup 1,700 L of cargo and 2 km of EV range.
+- **Verdict:**
+  - Skip RevCarData. US coverage is low and values are wrong where it does match.
+  - CarSpecsAPI is worth a paid month only if 69% at the generation level holds for trims. Its trims are engine/gearbox variants, so they would be matched on engine, not on US trim names.
+
 ## Open questions
 
-- Coverage: do CarSpecsAPI and RevCarData cover US-market models from 2015 to 2026? The free-tier probes answer this.
+- Coverage: answered for the hierarchy by the probe above. CarSpecsAPI's trim-level US coverage needs a paid month to check.
 - RevCarData licence:
   - Is a one-time CSV licence perpetual?
   - Does a no-revenue public site count as "non-commercial"?
   - Is a per-listing specs endpoint an allowed use?
 - CarSpecsAPI licence: may data cached during a paid month be kept after cancelling? Ask support@carspecsapi.com.
-- vPIC fill rates on our VINs: to be measured with one batch of 50.
+- vPIC fill rates: measured on 50 of our VINs (hp 56%, curb weight 64%, wheel size 10%), so low-fill fields were dropped from the sheet.
 - NHTSA API terms and limits: the overview page returned 403.
 - 0–60 mph: none of the sources checked provide it.
