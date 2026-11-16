@@ -189,6 +189,15 @@ export default function CarIntelDashboard() {
   }, [view, listingId]);
 
   const optionsFor = (rows, key) => Array.from(new Set(rows.map((d) => d[key]?.toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  // Options are lowercased to merge "FORTE" and "Forte"; show each in its most common spelling, so "bmw" reads "BMW".
+  const labels = useMemo(() => {
+    const n = {};
+    deals.forEach((d) => [d.make, d.model].forEach((s) => s && (n[s] = (n[s] || 0) + 1)));
+    const out = {};
+    Object.entries(n).sort((a, b) => b[1] - a[1]).forEach(([s]) => { out[s.toLowerCase()] ??= s; });
+    return out;
+  }, [deals]);
+  const label = (s) => labels[s] ?? cap(s);
   const makeOptions = useMemo(() => optionsFor(deals, "make"), [deals]);
   const modelOptions = useMemo(() => (makeFilter ? optionsFor(deals.filter((d) => d.make?.toLowerCase() === makeFilter), "model") : []), [deals, makeFilter]);
   const estModelOptions = useMemo(() => (estMake ? optionsFor(deals.filter((d) => d.make?.toLowerCase() === estMake), "model") : []), [deals, estMake]);
@@ -411,11 +420,11 @@ export default function CarIntelDashboard() {
             <div className="search-grid">
               <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
                 <option value="">All makes</option>
-                {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
               </Select>
               <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
                 <option value="">All models</option>
-                {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
               </Select>
               <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); setSizeFilter(""); }}>
                 <option value="">All body types</option>
@@ -601,7 +610,7 @@ export default function CarIntelDashboard() {
     const matches = estResult
       ? deals.filter((d) => d.make?.toLowerCase() === estMake && d.model?.toLowerCase() === estModel && String(d.year) === String(estYear)).length
       : 0;
-    const carName = `${estYear} ${cap(estMake)} ${cap(estModel)}`;
+    const carName = `${estYear} ${label(estMake)} ${label(estModel)}`;
     return (
       <>
         {header}
@@ -612,11 +621,11 @@ export default function CarIntelDashboard() {
               <form className="pc-form" onSubmit={(e) => { e.preventDefault(); runEstimate(); }}>
                 <Select label="Make" value={estMake} onChange={(v) => { setEstMake(v); setEstModel(""); setEstTrim(""); setEstResult(null); }}>
                   <option value="">Choose a make</option>
-                  {keep(makeOptions, estMake).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                  {keep(makeOptions, estMake).map((m) => <option key={m} value={m}>{label(m)}</option>)}
                 </Select>
                 <Select label="Model" value={estModel} onChange={(v) => { setEstModel(v); setEstTrim(""); setEstResult(null); }} disabled={!estMake}>
                   <option value="">Choose a model</option>
-                  {keep(estModelOptions, estModel).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+                  {keep(estModelOptions, estModel).map((m) => <option key={m} value={m}>{label(m)}</option>)}
                 </Select>
                 {keep(estTrimOptions, estTrim).length > 0 && (
                   <Select label="Trim (optional)" value={estTrim} onChange={(v) => { setEstTrim(v); setEstResult(null); }}>
@@ -709,11 +718,11 @@ export default function CarIntelDashboard() {
             </h2>
             <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
               <option value="">All makes</option>
-              {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+              {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
             </Select>
             <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
               <option value="">All models</option>
-              {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{cap(m)}</option>)}
+              {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
             </Select>
             <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); if (!SIZE_SUPPORTED.has(v.toLowerCase())) setSizeFilter(""); }}>
               <option value="">All body types</option>
