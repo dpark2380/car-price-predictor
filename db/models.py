@@ -124,6 +124,24 @@ class ModelSpecs(Base):
     __table_args__ = (UniqueConstraint("year", "make", "model"),)
 
 
+class EngineSpecs(Base):
+    """hp and torque found by web search (scripts/specs_search_backfill.py).
+    hp/torque are set only when two sites quote the same single rating; else NULL."""
+    __tablename__ = "engine_specs"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    year        = Column(Integer, nullable=False)
+    make        = Column(String, nullable=False)     # lowercase
+    model       = Column(String, nullable=False)     # lowercase
+    engine_size = Column(Float, nullable=False)      # litres, 1 decimal
+    fuel        = Column(String, nullable=False)     # gas, diesel or hybrid: same size can differ (Duramax 6.6)
+    hp          = Column(Integer)
+    torque      = Column(Integer)                    # lb-ft
+    sources     = Column(Text)                       # JSON [{url, quote}] backing hp/torque
+    raw         = Column(Text)                       # model answer + cited text, for audit
+    fetched_at  = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("year", "make", "model", "engine_size", "fuel"),)
+
+
 DB_PATH = "sqlite:///car_intel.db"
 
 # Listings on market longer than this (Marketcheck `dom`) are excluded from

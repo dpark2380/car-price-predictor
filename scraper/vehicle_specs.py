@@ -17,7 +17,7 @@ import requests
 from loguru import logger
 from sqlalchemy import func
 
-from db.models import CarListing, ModelSpecs, VinSpecs
+from db.models import CarListing, EngineSpecs, ModelSpecs, VinSpecs
 
 VPIC = "https://vpic.nhtsa.dot.gov/api/vehicles"
 RATINGS = "https://api.nhtsa.gov/SafetyRatings"
@@ -43,6 +43,16 @@ DRIVE_WORDS = {"4WD": {"4WD", "4X4"}, "AWD": {"AWD"}, "FWD": {"FWD", "2WD"}, "RW
 def squish(vin: str) -> str:
     """Model, engine and year part of a VIN (drops check digit and serial)."""
     return vin[:8] + vin[9]
+
+
+def fuel_class(fuel_type: str | None, powertrain: str | None) -> str | None:
+    """gas, diesel or hybrid; None when unknown (a search without it can't tell a Duramax from a gas 6.6)."""
+    f = (fuel_type or "").lower()
+    if not f or "electric" == f:
+        return None
+    if "diesel" in f:
+        return "diesel"
+    return "hybrid" if (powertrain or "") in ("HEV", "PHEV", "MHEV") or "electric" in f else "gas"
 
 
 def _blank(v) -> bool:
@@ -130,6 +140,7 @@ def build_spec_sheet(listing: dict, vin: dict, model: dict) -> list[dict]:
         ("Safety & Security", "Rear camera", vin.get("RearVisibilitySystem")),
         ("Safety & Security", "Adaptive cruise control", vin.get("AdaptiveCruiseControl")),
         ("Engine", "Power", _num(vin.get("EngineHP"), "{:.0f} hp")),
+        ("Engine", "Torque", _num(vin.get("EngineTorque"), "{:.0f} lb-ft")),
         ("Engine", "Engine size", _num(listing.get("engine_size"), "{:.1f} L")),
         ("Engine", "Cylinders", listing.get("cylinders")),
         ("Engine", "Layout", vin.get("EngineConfiguration")),
@@ -172,6 +183,12 @@ def sheet_for(session, listing_id: str):
         year=car.year, make=(car.make or "").lower(), model=(car.model or "").lower()).first()
     listing = {c.name: getattr(car, c.name) for c in CarListing.__table__.columns}
     vin = json.loads(vin_row.data) if vin_row else {}
+    if not vin.get("EngineHP") and car.engine_size and car.make and car.model:
+        found = session.query(EngineSpecs).filter_by(
+            year=car.year, make=car.make.lower().strip(), model=car.model.lower().strip(),
+            engine_size=round(car.engine_size, 1), fuel=fuel_class(car.fuel_type, car.powertrain_type)).first()
+        if found and found.hp:  # only values two sites agree on (scripts/specs_search_backfill.py)
+            vin = {**vin, "EngineHP": found.hp, "EngineTorque": found.torque}
     model = {"dims": json.loads(model_row.dims), "ratings": json.loads(model_row.ratings)} if model_row else {}
     if not (vin or model.get("dims") or model.get("ratings")):
         return []  # not fetched yet: a sheet of only our own few columns isn't worth showing
