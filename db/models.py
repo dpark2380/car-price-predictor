@@ -54,6 +54,7 @@ class CarListing(Base):
     days_listed    = Column(Integer, default=0)
     is_active      = Column(Integer, default=1)
     photo_url      = Column(Text)   # first listing photo (https), shown on the dashboard
+    photo_urls     = Column(Text)   # JSON list of every usable photo, for the listing page gallery
     __table_args__ = (
         Index("ix_make_model", "make", "model"),
         Index("ix_active", "is_active"),

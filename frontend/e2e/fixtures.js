@@ -26,6 +26,7 @@ async function mockApi(page) {
       case "/api/deals": return json(DEALS.slice(0, Number(url.searchParams.get("limit")) || DEALS.length));
       case "/api/stats": return json({ graded_listings: DEALS.length, last_updated: new Date().toISOString() });
       case "/api/specs": return json([{ group: "Engine", rows: [["Power", "192 hp"]] }]);
+      case "/api/photos": return json(url.searchParams.get("id") === "a1" ? [1, 2, 3].map((n) => `https://img.example/a1-${n}.jpg`) : []);
       case "/api/predict": return json({ predicted_price: 21300, range_low: 19800, range_high: 22900, comparables: 12 });
       default: return route.fulfill({ status: 404, json: { error: "not mocked" } });
     }

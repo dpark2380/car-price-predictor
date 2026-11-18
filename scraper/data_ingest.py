@@ -191,6 +191,13 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
 
         body_type = normalize_body_type(extract_body_type(raw))
 
+        # Dealer-hosted photos only (media.photo_links). Marketcheck's own
+        # cached copies (photo_links_cached) embed the api_key and count
+        # against the account, so never pass on a URL that mentions either.
+        photos = list(dict.fromkeys(u for u in ((raw.get("media") or {}).get("photo_links") or [])
+                                    if isinstance(u, str) and u.startswith("https://")
+                                    and "api_key" not in u and "marketcheck" not in u.lower()
+                                    and not _PLACEHOLDER_PHOTO.search(u)))
         return {
             "listing_id":     listing_id,
             "vin":            raw.get("vin"),
@@ -238,13 +245,8 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "location_state": dealer.get("state"),
             "location_zip":   dealer.get("zip"),
             "days_listed":    raw.get("dom", 0) or 0,
-            # Dealer-hosted photos only (media.photo_links). Marketcheck's own
-            # cached copies (photo_links_cached) embed the api_key and count
-            # against the account, so never pass on a URL that mentions either.
-            "photo_url":      next((u for u in ((raw.get("media") or {}).get("photo_links") or [])
-                                    if isinstance(u, str) and u.startswith("https://")
-                                    and "api_key" not in u and "marketcheck" not in u.lower()
-                                    and not _PLACEHOLDER_PHOTO.search(u)), None),
+            "photo_url":      photos[0] if photos else None,
+            "photo_urls":     json.dumps(photos) if photos else None,
         }
     except Exception as e:
         logger.warning(f"map_listing failed: {e}")

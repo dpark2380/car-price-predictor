@@ -68,6 +68,34 @@ export function Photo({ src, alt }) {
   return <img src={src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
+// Listing page photos: one large photo with previous/next, and a strip of thumbnails.
+// The parent remounts it per listing (key), so it always opens on the first photo.
+export function Gallery({ photos, alt }) {
+  const [i, setI] = useState(0);
+  const n = photos.length;
+  if (n <= 1) return <div className="detail-photo"><Photo src={photos[0]} alt={alt} /></div>;
+  const go = (d) => setI((i + d + n) % n);
+  return (
+    <div className="gallery" onKeyDown={(e) => { if (e.key === "ArrowLeft") go(-1); if (e.key === "ArrowRight") go(1); }}>
+      <div className="detail-photo">
+        <Photo key={photos[i]} src={photos[i]} alt={`${alt}, photo ${i + 1} of ${n}`} />
+        <button type="button" className="gallery-nav prev" aria-label="Previous photo" onClick={() => go(-1)}>‹</button>
+        <button type="button" className="gallery-nav next" aria-label="Next photo" onClick={() => go(1)}>›</button>
+        <span className="gallery-count num" aria-hidden="true">{i + 1} / {n}</span>
+      </div>
+      <div className="gallery-thumbs">
+        {photos.map((src, j) => (
+          <button type="button" key={src} className={j === i ? "on" : ""} aria-label={`Photo ${j + 1}`} aria-current={j === i}
+            onClick={() => setI(j)}>
+            <img src={src} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer"
+              onError={(e) => { e.currentTarget.parentElement.hidden = true; }} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Days since our scraper last saw the ad live (0 = in the latest run).
 export const daysSinceSeen = (deal) =>
   deal.last_seen ? Math.max(0, Math.floor((Date.now() - new Date(`${deal.last_seen}T00:00:00Z`)) / 86400000)) : null;

@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
 import { Select } from "./components/Select";
-import { BrandMark, CardSkeleton, DealPill, ListingCard, Photo, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
+import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
@@ -110,6 +110,7 @@ export default function CarIntelDashboard() {
   const [view, setView] = useState(initial.view); // "home" | "results" | "estimator" | "listing"
   const [listingId, setListingId] = useState(initial.listingId);
   const [specs, setSpecs] = useState([]);
+  const [photos, setPhotos] = useState([]);
 
   const isRes = initial.view === "results";
   const [makeFilter, setMakeFilter] = useState(isRes ? initial.make : "");
@@ -176,15 +177,19 @@ export default function CarIntelDashboard() {
     load("stats", `${API}/stats`, setStats);
   }, []);
 
-  // Spec sheet for the open listing: NHTSA data, empty until the pipeline has fetched it.
+  // Spec sheet and photo gallery for the open listing. Specs stay empty until the pipeline has fetched them.
   useEffect(() => {
     setSpecs([]);
+    setPhotos([]);
     if (view !== "listing" || !listingId) return;
     let live = true;
-    fetch(`${API}/specs?id=${encodeURIComponent(listingId)}`)
-      .then((r) => (r.ok ? r.json() : []))
-      .then((s) => live && setSpecs(s))
-      .catch(() => {});
+    const load = (path, set) =>
+      fetch(`${API}/${path}?id=${encodeURIComponent(listingId)}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((v) => live && set(v))
+        .catch(() => {});
+    load("specs", setSpecs);
+    load("photos", setPhotos);
     return () => { live = false; };
   }, [view, listingId]);
 
@@ -539,9 +544,7 @@ export default function CarIntelDashboard() {
         <main className="wrap" id="main" tabIndex={-1}>
           <a className="back-link" href={PATHS.results} onClick={goBack}>← Listings</a>
           <div className="detail">
-            <div className="detail-photo">
-              <Photo src={deal.photo_url} alt={name} />
-            </div>
+            <Gallery key={deal.listing_id} photos={photos.length ? photos : [deal.photo_url].filter(Boolean)} alt={name} />
             <section className="panel" aria-labelledby="listing-title">
               <DealPill score={deal.deal_score} />
               <h1 id="listing-title" style={{ marginTop: 10 }}>{name}</h1>

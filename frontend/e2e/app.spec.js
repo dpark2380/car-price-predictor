@@ -53,6 +53,19 @@ test("a listing opens from its card and shows the spec sheet", async ({ page }) 
   expect(await noSideScroll(page)).toBe(true);
 });
 
+test("the listing gallery steps through its photos", async ({ page }) => {
+  await page.goto("/listings/a1");
+  await expect(page.locator(".gallery-count")).toHaveText("1 / 3");
+  await page.getByRole("button", { name: "Next photo" }).click();
+  await expect(page.locator(".gallery-count")).toHaveText("2 / 3");
+  await page.getByRole("button", { name: "Previous photo" }).click();
+  await page.getByRole("button", { name: "Previous photo" }).click(); // wraps to the last
+  await expect(page.locator(".gallery-count")).toHaveText("3 / 3");
+  await page.getByRole("button", { name: "Photo 1" }).click();
+  await expect(page.getByRole("img", { name: /photo 1 of 3/ })).toBeVisible();
+  expect(await noSideScroll(page)).toBe(true);
+});
+
 test("price check shows an estimate and its range", async ({ page }) => {
   await page.goto("/price-check");
   await page.getByRole("button", { name: /^Make/ }).click();

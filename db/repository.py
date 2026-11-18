@@ -62,7 +62,7 @@ class ListingRepository:
                     "price", "mileage", "days_listed",
                     "dealer_name", "dealer_type", "dealer_phone", "dealer_street",
                     "location_city", "location_state", "location_zip",
-                    "scrape_source", "photo_url",
+                    "scrape_source", "photo_url", "photo_urls",
                     "transmission", "drivetrain", "fuel_type", "powertrain_type", "engine_size",
                     "cylinders", "doors", "seats", "city_mpg", "highway_mpg", "carfax_1_owner",
                     "ref_price", "price_change_percent", "dom_active",

@@ -4,6 +4,7 @@ Run: PYTHONPATH=. python3 api.py
 """
 
 import functools
+import json
 import math
 import os
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ from flask_cors import CORS
 from loguru import logger
 from werkzeug.exceptions import HTTPException
 
-from db.models import init_db, get_session
+from db.models import CarListing, init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 from scraper import vehicle_specs
 
@@ -261,6 +262,22 @@ def specs():
     if sheet is None:
         abort(404, "no such listing")
     return jsonify(sheet)
+
+
+@app.route("/api/photos")
+@db_cached("id", maxsize=256)
+def photos():
+    """Every photo URL for one listing, card photo first. Older rows and Auto.dev fills
+    only have photo_url, so they return that one. Query param: id."""
+    session = get_db()
+    try:
+        car = session.query(CarListing.photo_urls, CarListing.photo_url).filter_by(
+            listing_id=request.args.get("id", "")[:200]).first()
+    finally:
+        session.close()
+    if car is None:
+        abort(404, "no such listing")
+    return jsonify(json.loads(car.photo_urls) if car.photo_urls else [car.photo_url] if car.photo_url else [])
 
 
 @app.route("/api/popular")
