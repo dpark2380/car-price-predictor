@@ -177,7 +177,7 @@ PYTHONPATH=. python3 api.py    # http://localhost:5001
 
 # 6. Start the frontend
 cd frontend
-npm install
+npx npm@10.9 install   # npm 10, as Cloudflare Pages uses; npm 11 writes a lockfile its npm ci rejects
 cp .env.example .env   # optional, only needed if the API isn't on localhost:5001
 npm start
 ```
