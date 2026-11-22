@@ -184,6 +184,8 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
 
         if not all([price, mileage, year, make, model]):
             return None
+        if not (str(make).strip() and str(model).strip()):
+            return None
         if float(price) > 100_000:
             return None
 
@@ -244,7 +246,7 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "location_city":  dealer.get("city"),
             "location_state": dealer.get("state"),
             "location_zip":   dealer.get("zip"),
-            "days_listed":    raw.get("dom", 0) or 0,
+            "days_listed":    _num(raw.get("dom"), int) or 0,
             "photo_url":      photos[0] if photos else None,
             "photo_urls":     json.dumps(photos) if photos else None,
         }
@@ -280,7 +282,7 @@ _PLACEHOLDER_PHOTO = re.compile(
     r"not-?available|no-?image|no-?photo|coming-?soon|placeholder|not-?found|unavailable|new-?arrival|/na/napic", re.I)
 
 
-def _redact(e: Exception) -> str:
+def _redact(e) -> str:
     """requests puts the full URL, api_key included, in its error messages."""
     return str(e).replace(API_KEY, "<api_key>") if API_KEY else str(e)
 
@@ -303,7 +305,11 @@ def _log_call(search: dict, body: dict) -> None:
                 **search, "num_found": body.get("num_found"),
                 "listing_ids": [_make_listing_id(l) for l in body.get("listings", [])],
             }) + "\n")
-        SCRAPE_SAMPLE.write_text(json.dumps(body, indent=1))
+        # The key rides in URLs inside the body: redact it, keep the file private.
+        fd = os.open(SCRAPE_SAMPLE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(_redact(json.dumps(body, indent=1)))
+        os.chmod(SCRAPE_SAMPLE, 0o600)  # O_CREAT mode doesn't tighten an existing file
     except Exception as e:  # never let logging cost a paid call's results
         logger.warning(f"  Could not write {SCRAPE_CALLS_LOG}: {e}")
 

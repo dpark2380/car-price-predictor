@@ -30,7 +30,7 @@ def _reachable(host: str, timeout: float, ports=(443,)) -> bool:
         try:
             socket.create_connection((host, port), timeout=timeout).close()
             return True
-        except OSError:
+        except (OSError, ValueError):  # ValueError: malformed host (idna codec)
             pass
     return False
 
