@@ -141,6 +141,7 @@ def build_spec_sheet(listing: dict, vin: dict, model: dict) -> list[dict]:
         ("Safety & Security", "Adaptive cruise control", vin.get("AdaptiveCruiseControl")),
         ("Engine", "Power", _num(vin.get("EngineHP"), "{:.0f} hp")),
         ("Engine", "Torque", _num(vin.get("EngineTorque"), "{:.0f} lb-ft")),
+        ("Engine", "0-60 mph", _num(vin.get("ZeroToSixty"), "{:.1f} s")),
         ("Engine", "Engine size", _num(listing.get("engine_size"), "{:.1f} L")),
         ("Engine", "Cylinders", listing.get("cylinders")),
         ("Engine", "Layout", vin.get("EngineConfiguration")),
@@ -183,12 +184,14 @@ def sheet_for(session, listing_id: str):
         year=car.year, make=(car.make or "").lower(), model=(car.model or "").lower()).first()
     listing = {c.name: getattr(car, c.name) for c in CarListing.__table__.columns}
     vin = json.loads(vin_row.data) if vin_row else {}
-    if not vin.get("EngineHP") and car.engine_size and car.make and car.model:
+    if car.engine_size and car.make and car.model:
         found = session.query(EngineSpecs).filter_by(
             year=car.year, make=car.make.lower().strip(), model=car.model.lower().strip(),
             engine_size=round(car.engine_size, 1), fuel=fuel_class(car.fuel_type, car.powertrain_type)).first()
-        if found and found.hp:  # only values two sites agree on (scripts/specs_search_backfill.py)
+        if found and found.hp and not vin.get("EngineHP"):  # only values two sites agree on (scripts/specs_search_backfill.py)
             vin = {**vin, "EngineHP": found.hp, "EngineTorque": found.torque}
+        if found and found.zero_to_sixty:
+            vin = {**vin, "ZeroToSixty": found.zero_to_sixty}
     model = {"dims": json.loads(model_row.dims), "ratings": json.loads(model_row.ratings)} if model_row else {}
     if not (vin or model.get("dims") or model.get("ratings")):
         return []  # not fetched yet: a sheet of only our own few columns isn't worth showing

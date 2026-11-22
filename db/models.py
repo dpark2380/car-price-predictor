@@ -136,6 +136,7 @@ class EngineSpecs(Base):
     fuel        = Column(String, nullable=False)     # gas, diesel or hybrid: same size can differ (Duramax 6.6)
     hp          = Column(Integer)
     torque      = Column(Integer)                    # lb-ft
+    zero_to_sixty = Column(Float)                    # seconds; set only when two sites quote it within 0.5 s
     sources     = Column(Text)                       # JSON [{url, quote}] backing hp/torque
     raw         = Column(Text)                       # model answer + cited text, for audit
     fetched_at  = Column(DateTime, default=datetime.utcnow)
