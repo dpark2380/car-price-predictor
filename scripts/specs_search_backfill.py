@@ -34,7 +34,7 @@ TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
 
 
 def ask(year, make, model, engine, fuel) -> dict:
-    """One Claude call with web search -> {"answer": {...}, "cited": str, "usage": {...}}."""
+    """One Claude call with web search -> {"answer": {...}, "cited": str, "urls": [...], "usage": {...}}."""
     kind = {"gas": "gasoline", "diesel": "diesel", "hybrid": "hybrid"}[fuel]
     msg = {"role": "user", "content": f"{year} {make} {model} with the {engine:.1f} L {kind} engine: rated horsepower and torque."}
     r = subprocess.run(
@@ -45,32 +45,44 @@ def ask(year, make, model, engine, fuel) -> dict:
     texts = [b for b in resp.get("content", []) if b.get("type") == "text"]
     full = "".join(b["text"] for b in texts)
     cited = " ".join(c.get("cited_text", "") for b in texts for c in (b.get("citations") or []))
+    # URLs the search tool really returned (result blocks and citations), not ones the model typed
+    urls = sorted({r["url"] for b in resp.get("content", []) if b.get("type") == "web_search_tool_result"
+                   for r in (b.get("content") or []) if isinstance(r, dict) and r.get("url")}
+                  | {c["url"] for b in texts for c in (b.get("citations") or []) if c.get("url")})
     try:
         answer = json.JSONDecoder().raw_decode(full[full.rindex('{"ratings"'):])[0]
     except ValueError:  # no JSON: store nothing usable
         answer = {"ratings": [], "unparsed": full[-500:]}
-    return {"answer": answer, "cited": cited, "usage": resp.get("usage")}
+    return {"answer": answer, "cited": cited, "urls": urls, "usage": resp.get("usage")}
 
 
 def site(url: str) -> str:
-    host = urlparse(url).netloc.lower()
+    try:
+        host = urlparse(url).netloc.lower() if isinstance(url, str) else ""
+    except ValueError:
+        return ""
     return ".".join(host.split(".")[-2:])
 
 
-def accept(answer: dict, cited: str) -> tuple[int | None, int | None, list]:
-    """(hp, torque, sources) when one rating is backed by two sites, else (None, None, [])."""
+def accept(answer: dict, cited: str, urls: list = ()) -> tuple[int | None, int | None, list]:
+    """(hp, torque, sources) when one rating is backed by two sites the search tool
+    really returned, else (None, None, []). Each source gets the tool's real urls for its site."""
     ratings = answer.get("ratings") or []
     if len({(r.get("hp"), r.get("torque_lbft")) for r in ratings}) != 1:
         return None, None, []  # none found, or several tunes/conflicting sources
     r = ratings[0]
     hp, tq = r.get("hp"), r.get("torque_lbft")
-    if not isinstance(hp, int):
+    if not isinstance(hp, int) or isinstance(hp, bool) or not 40 <= hp <= 2000:
         return None, None, []
     has = lambda n, q: n is not None and re.search(rf"(?<!\d){n:,}(?!\d)|(?<!\d){n}(?!\d)", q or "")
-    srcs = [s for s in r.get("sources") or [] if has(hp, s.get("quote"))]
-    if len({site(s.get("url", "")) for s in srcs}) < 2 or not has(hp, cited):
+    real = {site(u) for u in urls} - {""}
+    srcs = [{**s, "tool_urls": [u for u in urls if site(u) == site(s.get("url", ""))]}
+            for s in r.get("sources") or []
+            if has(hp, s.get("quote")) and site(s.get("url", "")) in real]  # named source must be one the tool returned
+    if len({site(s["url"]) for s in srcs}) < 2 or not has(hp, cited):
         return None, None, []
-    torque = tq if isinstance(tq, int) and all(has(tq, s.get("quote")) for s in srcs) else None
+    torque = tq if isinstance(tq, int) and not isinstance(tq, bool) and 40 <= tq <= 2500 \
+        and all(has(tq, s.get("quote")) for s in srcs) else None
     return hp, torque, srcs
 
 
@@ -102,11 +114,11 @@ def main():
         except (subprocess.SubprocessError, ValueError) as e:
             print(f"{i}/{len(configs)} {year} {make} {model} {engine} {fuel}: failed ({e}), retried next run")
             continue
-        hp, torque, srcs = accept(res["answer"], res["cited"])
+        hp, torque, srcs = accept(res["answer"], res["cited"], res["urls"])
         searches += ((res["usage"] or {}).get("server_tool_use") or {}).get("web_search_requests", 0)
         kept += hp is not None
         session.add(EngineSpecs(year=year, make=make, model=model, engine_size=engine, fuel=fuel, hp=hp, torque=torque,
-                                sources=json.dumps(srcs), raw=json.dumps({"answer": res["answer"], "cited": res["cited"]})))
+                                sources=json.dumps(srcs), raw=json.dumps({"answer": res["answer"], "cited": res["cited"], "urls": res["urls"]})))
         session.commit()
         print(f"{i}/{len(configs)} {year} {make} {model} {engine} {fuel}: {hp or '-'} hp, {torque or '-'} lb-ft", flush=True)
     print(f"Done: {kept} of {len(configs)} configs kept, {searches} searches")
