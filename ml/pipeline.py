@@ -9,7 +9,6 @@ from sklearn.model_selection import train_test_split, GridSearchCV, GroupShuffle
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.ensemble import RandomForestRegressor, VotingRegressor
-from sklearn.inspection import permutation_importance
 from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin, clone
 
 
@@ -303,18 +302,6 @@ def _build_features_raw(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _apply_cohort_features(X: pd.DataFrame, cohort_stats: pd.DataFrame) -> pd.DataFrame:
-    """
-    Join cohort median price and count onto X by (make, model, year).
-    Missing cohorts get NaN/0 — the pipeline imputer handles these gracefully.
-    """
-    X = X.copy()
-    keys = pd.MultiIndex.from_arrays([X["make"], X["model"], X["year"]])
-    X["cohort_median_price"] = cohort_stats["cohort_median"].reindex(keys).to_numpy()
-    X["cohort_count"] = cohort_stats["cohort_count"].reindex(keys).fillna(0).to_numpy().astype(float)
-    return X
-
-
 def _dealer_keys(df: pd.DataFrame) -> pd.Series:
     """Normalised dealer name; a listing with none counts as its own dealer."""
     d = df.get("dealer_name", pd.Series("", index=df.index)).fillna("").astype(str).str.lower().str.strip()
@@ -348,9 +335,8 @@ def _cohort_features(X: pd.DataFrame, dealers: pd.Series, ref: pd.DataFrame) -> 
     X = X.copy()
     X["cohort_median_price"] = stats["median"].reindex(rows).to_numpy()
     X["cohort_count"] = stats["count"].reindex(rows).fillna(0).to_numpy().astype(float)
-    if "trim" in ref:  # models trained before comp_price have no trim/mileage in ref
-        q = q.assign(mileage=X["mileage"].to_numpy(), trim=X["trim"].to_numpy())
-        X["comp_price"] = _comp_prices(q, ref).reindex(rows).to_numpy()
+    q = q.assign(mileage=X["mileage"].to_numpy(), trim=X["trim"].to_numpy())
+    X["comp_price"] = _comp_prices(q, ref).reindex(rows).to_numpy()
     return X
 
 
@@ -391,9 +377,8 @@ def _vin_split(df: pd.DataFrame, seed: int = 42):
     return rest[tr], rest[val], test
 
 
-def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict | None:
-    """df: rows from ListingRepository.get_training_listings_df; repo: that
-    ListingRepository, used to compute cohort stats in SQL. model_path=None
+def train(df: pd.DataFrame, model_path: str | None = MODEL_PATH) -> dict | None:
+    """df: rows from ListingRepository.get_training_listings_df. model_path=None
     trains and evaluates without saving (scripts/holdout_audit.py).
 
     The test split is touched once, for reporting: model selection and the
@@ -419,9 +404,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
     y_train, y_val, y_test = y.iloc[tr], y.iloc[va], y.iloc[te]
 
     # Cohort features come from training-split rows of other dealers (see
-    # _cohort_features). The all-dealer SQL stats serve /api/predict, whose
-    # car has no dealer.
-    full_cohort_stats = repo.get_cohort_stats(df["id"].iloc[tr])
+    # _cohort_features).
     dealers = _dealer_keys(df)
     cohort_ref = _cohort_ref(X_train, dealers.iloc[tr], y_train)
     X_train = _cohort_features(X_train, dealers.iloc[tr], cohort_ref)
@@ -630,31 +613,6 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
 
         pipe.fit(X_train, y_train_log)
 
-        # ---- Relaxed LASSO: log selected features + coefficient comparison ----
-        if name == "relaxed_lasso":
-            rl = pipe.named_steps["model"]
-            try:
-                feat_names = pipe.named_steps["preprocess"].get_feature_names_out()
-                sel = feat_names[rl.selected_mask_]
-                total = len(feat_names)
-                logger.info(
-                    f"Relaxed LASSO: {rl.n_selected_}/{total} features selected  "
-                    f"(λ_used={rl.lambda_used_:.5f}, λ_min={rl.lambda_min_:.5f})"
-                )
-                # Mirror the R notes: show LASSO estimate vs OLS (debiased) estimate
-                coef_rows = sorted(
-                    zip(sel, rl.lasso_coef_, rl.ols_coef_),
-                    key=lambda r: abs(r[2]),
-                    reverse=True,
-                )
-                header = f"  {'Feature':<45} {'LASSO':>10}  {'OLS (debiased)':>14}"
-                lines = [header, "  " + "-" * 73]
-                for feat, lc, oc in coef_rows[:20]:
-                    lines.append(f"  {feat:<45} {lc:>+10.4f}  {oc:>+14.4f}")
-                logger.info("Top 20 coefficients (log-price space):\n" + "\n".join(lines))
-            except Exception as e:
-                logger.warning(f"Could not log Relaxed LASSO coefficients: {e}")
-
         # ---- training RMSE (log-space) for ALL models (works consistently) ----
         pred_train_log = pipe.predict(X_train)
         train_rmse_log = float(np.sqrt(mean_squared_error(y_train_log.to_numpy(), pred_train_log)))
@@ -698,27 +656,6 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
             f"trainRMSE(log)={train_rmse_log:.4f} | "
             f"luxury=${lux_mae:,.0f} (n={lux_n}) nonlux=${nonlux_mae:,.0f} (n={nonlux_n})"
         )
-
-        # Price tier breakdown — shows % error at each price level.
-        # MAE is heteroscedastic: the same dollar error hits cheap cars harder.
-        _buckets = [
-            ("<$10k",   0,      10_000),
-            ("$10-20k", 10_000, 20_000),
-            ("$20-35k", 20_000, 35_000),
-            ("$35-60k", 35_000, 60_000),
-            (">$60k",   60_000, float("inf")),
-        ]
-        _tier_parts = []
-        for _label, _lo, _hi in _buckets:
-            _mask = (y_true >= _lo) & (y_true < _hi)
-            _n = int(_mask.sum())
-            if _n < 5:
-                continue
-            _tier_mae  = float(np.mean(np.abs(pred_test[_mask] - y_true[_mask])))
-            _tier_mean = float(np.mean(y_true[_mask]))
-            _tier_pct  = _tier_mae / _tier_mean * 100
-            _tier_parts.append(f"{_label} ${_tier_mae:,.0f} ({_tier_pct:.0f}%,n={_n})")
-        logger.info("  tiers | " + " | ".join(_tier_parts))
 
     # pick best by validation MAE — never by test
     best_name = min(metrics.keys(), key=lambda k: metrics[k]["val_mae"])
@@ -771,29 +708,6 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         + "/".join(f"{c:.1f}" for _, _, c in cells) + ")" for lo, hi, err, cells in segment_errors))
 
     # -----------------------------
-    # 7) Permutation importance on RAW features (24 cols), validation split
-    # -----------------------------
-    try:
-        pi = permutation_importance(
-            pipe,
-            X_val,                   # raw features
-            y_val_log,               # log target (matches training)
-            n_repeats=5,
-            random_state=42,
-            n_jobs=-1,
-            scoring="neg_mean_absolute_error",
-        )
-
-        imp = (
-            pd.Series(pi.importances_mean, index=X_val.columns)
-            .sort_values(ascending=False)
-        )
-        logger.info("Top permutation importances (raw features):\n" + imp.head(20).to_string())
-
-    except Exception as e:
-        logger.warning(f"Permutation importance failed: {e}")
-
-    # -----------------------------
     # 7) Save
     # -----------------------------
     version = datetime.utcnow().strftime("%Y%m%d_%H%M")
@@ -803,7 +717,6 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         "selected_model": best_name,
         "metrics": metrics,
         "log_calibration": log_calibration,
-        "cohort_stats": full_cohort_stats,
         "cohort_ref": cohort_ref,
         "oof_predictions": oof_predictions,
         "segment_errors": segment_errors,
@@ -813,27 +726,7 @@ def train(df: pd.DataFrame, repo, model_path: str | None = MODEL_PATH) -> dict |
         os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
         joblib.dump(payload, model_path)
 
-    logger.info("\n" + "="*72)
-    logger.info(f"MODEL TRAINING SUMMARY  |  Version: {version}")
-    logger.info("="*72)
-
-    for name, m in metrics.items():
-        logger.info(
-            f"{name.upper():<8} | "
-            f"MAE=${m['mae']:>8,.0f}  "
-            f"RMSE=${m['rmse']:>8,.0f}  "
-            f"TrainRMSE(log)={m['train_rmse_log']:.4f}"
-        )
-        logger.info(
-            f"          Luxury MAE=${m['luxury_mae']:>8,.0f} (n={m['luxury_n']})  "
-            f"Non-Lux MAE=${m['nonlux_mae']:>8,.0f} (n={m['nonlux_n']})"
-        )
-        logger.info("-"*72)
-
-    logger.info(f"SELECTED MODEL → {best_name.upper()}")
-    logger.info(f"Rows after cleaning: {len(df)}")
-    logger.info(f"Train/Val/Test split (VIN-grouped): {len(X_train)}/{len(X_val)}/{len(X_test)}")
-    logger.info("="*72 + "\n")
+    logger.info(f"Selected model: {best_name}")
 
     return {
         "version":        version,
@@ -996,10 +889,7 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
 
     logger.info(f"Scoring {len(df)} listings…")
     X = _build_features_raw(df)
-    if payload.get("cohort_ref") is not None:
-        X = _cohort_features(X, _dealer_keys(df), payload["cohort_ref"])
-    elif payload.get("cohort_stats") is not None:  # models trained before cohort_ref
-        X = _apply_cohort_features(X, payload["cohort_stats"])
+    X = _cohort_features(X, _dealer_keys(df), payload["cohort_ref"])
     log_calibration = payload.get("log_calibration", 0.0)
     preds = np.expm1(model.predict(X) - log_calibration)
     # Cars the model trained on get their out-of-fold prediction (see train)

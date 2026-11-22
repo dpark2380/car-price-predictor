@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from scraper.api_usage import _atomic_write
+
 DEALER_SITES_PATH = Path("data/dealer_sites.json")
 
 
@@ -48,10 +50,7 @@ def find_down(hosts: set[str]) -> list[str]:
 
 
 def save_down(down: list[str], checked: int, path: Path = DEALER_SITES_PATH) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"checked_at": datetime.now(timezone.utc).isoformat(), "hosts_checked": checked, "down": down}, indent=2))
-    tmp.replace(path)
+    _atomic_write(path, {"checked_at": datetime.now(timezone.utc).isoformat(), "hosts_checked": checked, "down": down})
 
 
 def load_down(path: Path = DEALER_SITES_PATH) -> set[str]:

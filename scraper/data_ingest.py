@@ -14,13 +14,12 @@ import requests
 from dotenv import load_dotenv
 from loguru import logger
 
-from scraper.api_usage import increment_call, month_total, ApiCallEvent
+from scraper.api_usage import increment_call, month_total
 from env_utils import env_int
 
 load_dotenv()
 
 API_KEY = os.getenv("MARKETCHECK_API_KEY", "")
-ZIP     = os.getenv("MARKETCHECK_ZIP", "94119")   # Fallback if zip rotation is disabled
 RADIUS  = env_int("MARKETCHECK_RADIUS", 100)
 # The free plan hard-stops at 500 calls a month. Scraping may use all of it;
 # the API's live Marketcheck endpoints then fail until the month resets.
@@ -28,10 +27,6 @@ MONTHLY_CALL_BUDGET = env_int("MARKETCHECK_MONTHLY_BUDGET", 500)
 BASE    = "https://mc-api.marketcheck.com/v2"
 
 CURSORS_DIR      = Path("data/cursors")
-
-# Legacy paths kept for backward-compat reads on first migration
-PAGE_CURSOR_PATH = Path("data/page_cursor.json")
-ZIP_CURSOR_PATH  = Path("data/main_zip_cursor.json")
 
 
 def _cursor_paths(target: str) -> tuple[Path, Path]:
@@ -66,23 +61,16 @@ SCRAPE_ZIPS = [
 ]
 
 
-def _load_zip_cursor(path: Path | None = None) -> int:
-    p = path or ZIP_CURSOR_PATH
+def _load_cursor(path: Path, key: str) -> int:
     try:
-        # Fall back to legacy path if per-target file doesn't exist yet
-        if not p.exists() and path is not None and ZIP_CURSOR_PATH.exists():
-            return int(json.loads(ZIP_CURSOR_PATH.read_text()).get("idx", 0))
-        if p.exists():
-            return int(json.loads(p.read_text()).get("idx", 0))
+        return int(json.loads(path.read_text()).get(key, 0))
     except Exception:
-        pass
-    return 0
+        return 0
 
 
-def _save_zip_cursor(idx: int, path: Path | None = None) -> None:
-    p = path or ZIP_CURSOR_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"idx": idx}))
+def _save_cursor(path: Path, key: str, v: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({key: int(v)}))
 
 
 def _make_listing_id(listing: dict) -> str:
@@ -255,25 +243,6 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
         return None
 
 
-def _load_page_cursor(path: Path | None = None) -> int:
-    p = path or PAGE_CURSOR_PATH
-    try:
-        # Fall back to legacy path if per-target file doesn't exist yet
-        if not p.exists() and path is not None and PAGE_CURSOR_PATH.exists():
-            return int(json.loads(PAGE_CURSOR_PATH.read_text()).get("page", 0))
-        if p.exists():
-            return int(json.loads(p.read_text()).get("page", 0))
-    except Exception:
-        pass
-    return 0
-
-
-def _save_page_cursor(page: int, path: Path | None = None) -> None:
-    p = path or PAGE_CURSOR_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"page": int(page)}))
-
-
 # Dealer sites' "no photo yet" images, e.g. vehicle-image-notavailable-320x240.jpg
 # Dealer stand-ins for a missing photo; the last four were found on live listings
 # (2026-11-08): notfound.jpg, photo_unavailable_640.png, *_newarrivalphoto.jpg
@@ -314,124 +283,113 @@ def _log_call(search: dict, body: dict) -> None:
         logger.warning(f"  Could not write {SCRAPE_CALLS_LOG}: {e}")
 
 
-class MarketCheckClient:
-    def fetch_listings(
-        self,
-        rows_per_call: int = 50,
-        max_calls: int = 1,
-        rotate_pages: bool = True,
-        pages_in_rotation: int = 10,
-        page_cursor_path: Path | None = None,
-        zip_cursor_path: Path | None = None,
-        **params,
-    ) -> list:
-        """
-        Rotates through pages across runs by persisting a cursor.
+def fetch_listings(
+    page_cursor_path: Path,
+    zip_cursor_path: Path,
+    rows_per_call: int = 50,
+    max_calls: int = 1,
+    pages_in_rotation: int = 10,
+    **params,
+) -> list:
+    """
+    Rotates through pages across runs by persisting a cursor.
 
-        - start_offset = (page_cursor % pages_in_rotation) * rows_per_call
-        - start = start_offset + i*rows_per_call
+    - start_offset = (page_cursor % pages_in_rotation) * rows_per_call
+    - start = start_offset + i*rows_per_call
 
-        Cursor update (auto-reset):
-          - if any call returns 0 listings -> reset cursor to 0
-          - if any call returns < rows_per_call -> treat as last page, reset to 0
-          - else advance cursor by max_calls (wrap by pages_in_rotation)
-        """
-        all_listings: list = []
+    Cursor update (auto-reset):
+      - if any call returns 0 listings -> reset cursor to 0
+      - if any call returns < rows_per_call -> treat as last page, reset to 0
+      - else advance cursor by max_calls (wrap by pages_in_rotation)
+    """
+    all_listings: list = []
 
-        if pages_in_rotation < 1:
-            pages_in_rotation = 1
+    if pages_in_rotation < 1:
+        pages_in_rotation = 1
 
-        # Rotate zip each run (per-target cursor)
-        if SCRAPE_ZIPS:
-            zip_idx = _load_zip_cursor(zip_cursor_path)
-            _active_zip = SCRAPE_ZIPS[zip_idx % len(SCRAPE_ZIPS)]
-            _save_zip_cursor((zip_idx + 1) % len(SCRAPE_ZIPS), zip_cursor_path)
-        else:
-            _active_zip = ZIP
+    # Rotate zip each run (per-target cursor)
+    zip_idx = _load_cursor(zip_cursor_path, "idx")
+    _active_zip = SCRAPE_ZIPS[zip_idx % len(SCRAPE_ZIPS)]
+    _save_cursor(zip_cursor_path, "idx", (zip_idx + 1) % len(SCRAPE_ZIPS))
 
-        page_cursor = _load_page_cursor(page_cursor_path) if rotate_pages else 0
-        start_offset = (page_cursor % pages_in_rotation) * rows_per_call
+    page_cursor = _load_cursor(page_cursor_path, "page")
+    start_offset = (page_cursor % pages_in_rotation) * rows_per_call
 
-        # Always call start=0 first to catch the freshest listings (API returns
-        # most recently posted first). Remaining calls explore the rotated offset
-        # for deeper inventory. Deduplicate so we don't double-call when offset=0.
-        _call_starts = [0]
-        for i in range(max_calls - 1):
-            pos = start_offset + i * rows_per_call
-            if pos not in _call_starts:
-                _call_starts.append(pos)
+    # Always call start=0 first to catch the freshest listings (API returns
+    # most recently posted first). Remaining calls explore the rotated offset
+    # for deeper inventory. Deduplicate so we don't double-call when offset=0.
+    _call_starts = [0]
+    for i in range(max_calls - 1):
+        pos = start_offset + i * rows_per_call
+        if pos not in _call_starts:
+            _call_starts.append(pos)
 
-        reset_to_zero = False
+    reset_to_zero = False
 
-        for _call_idx, start in enumerate(_call_starts):
-            if month_total() >= MONTHLY_CALL_BUDGET:
-                logger.warning(f"  Monthly Marketcheck budget reached ({MONTHLY_CALL_BUDGET} calls); skipping")
+    for _call_idx, start in enumerate(_call_starts):
+        if month_total() >= MONTHLY_CALL_BUDGET:
+            logger.warning(f"  Monthly Marketcheck budget reached ({MONTHLY_CALL_BUDGET} calls); skipping")
+            break
+        logger.info(f"  Marketcheck call {_call_idx+1}/{len(_call_starts)} (start={start})")
+
+        try:
+            # IMPORTANT: don't mutate params across iterations
+            _params = dict(params)
+
+            increment_call()
+            r = requests.get(
+                f"{BASE}/search/car/active",
+                params={
+                    "api_key":  API_KEY,
+                    "zip":      _active_zip,
+                    "radius":   RADIUS,
+                    "rows":     rows_per_call,
+                    "start":    start,
+                    "car_type": _params.pop("car_type", "used"),
+                    **_params,
+                },
+                timeout=15,
+            )
+            r.raise_for_status()
+
+            body = r.json()
+            listings = body.get("listings", [])
+            _log_call({"zip": _active_zip, "radius": RADIUS, "rows": rows_per_call, "start": start, **params}, body)
+            got = len(listings)
+            logger.info(f"  Got {got} listings (total: {len(all_listings) + got})")
+
+            if got == 0:
+                # Past the end; reset next run
+                reset_to_zero = True
                 break
-            logger.info(f"  Marketcheck call {_call_idx+1}/{len(_call_starts)} (start={start})")
 
-            try:
-                # IMPORTANT: don't mutate params across iterations
-                _params = dict(params)
+            all_listings.extend(listings)
 
-                increment_call(ApiCallEvent(provider="marketcheck", endpoint="/search/car/active"), n=1)
-                r = requests.get(
-                    f"{BASE}/search/car/active",
-                    params={
-                        "api_key":  API_KEY,
-                        "zip":      _active_zip,
-                        "radius":   RADIUS,
-                        "rows":     rows_per_call,
-                        "start":    start,
-                        "car_type": _params.pop("car_type", "used"),
-                        **_params,
-                    },
-                    timeout=15,
-                )
-                r.raise_for_status()
-
-                body = r.json()
-                listings = body.get("listings", [])
-                _log_call({"zip": _active_zip, "radius": RADIUS, "rows": rows_per_call, "start": start, **params}, body)
-                got = len(listings)
-                logger.info(f"  Got {got} listings (total: {len(all_listings) + got})")
-
-                if got == 0:
-                    # Past the end; reset next run
-                    reset_to_zero = True
-                    break
-
-                all_listings.extend(listings)
-
-                if got < rows_per_call:
-                    # Partial page -> likely last page; reset next run
-                    reset_to_zero = True
-                    break
-
-                time.sleep(random.uniform(0.5, 1.2))
-
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 422:
-                    # 422 means start offset exceeds available listings — reset cursor
-                    logger.warning(f"  Marketcheck 422: start offset too high, resetting page cursor")
-                    reset_to_zero = True
-                else:
-                    logger.warning(f"  Marketcheck call failed: {_redact(e)}")
-                    reset_to_zero = False
+            if got < rows_per_call:
+                # Partial page -> likely last page; reset next run
+                reset_to_zero = True
                 break
-            except Exception as e:
+
+            time.sleep(random.uniform(0.5, 1.2))
+
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 422:
+                # 422 means start offset exceeds available listings — reset cursor
+                logger.warning(f"  Marketcheck 422: start offset too high, resetting page cursor")
+                reset_to_zero = True
+            else:
                 logger.warning(f"  Marketcheck call failed: {_redact(e)}")
                 reset_to_zero = False
-                break
+            break
+        except Exception as e:
+            logger.warning(f"  Marketcheck call failed: {_redact(e)}")
+            reset_to_zero = False
+            break
 
-        # Cursor update for next run
-        if rotate_pages:
-            if reset_to_zero:
-                _save_page_cursor(0, page_cursor_path)
-            else:
-                next_page = (page_cursor + max_calls) % pages_in_rotation
-                _save_page_cursor(next_page, page_cursor_path)
+    # Cursor update for next run
+    _save_cursor(page_cursor_path, "page", 0 if reset_to_zero else (page_cursor + max_calls) % pages_in_rotation)
 
-        return all_listings
+    return all_listings
 
 
 # Map target names to additional Marketcheck API params. The filter is
@@ -444,40 +402,31 @@ TARGET_PARAMS = {
 }
 
 
-class DataIngestor:
-    CALLS_PER_TARGET = 5
-    ROWS_PER_CALL    = 50
+CALLS_PER_TARGET = 5
+ROWS_PER_CALL    = 50
 
-    def __init__(self):
-        self.client = MarketCheckClient()
 
-    def scrape_search(
-        self,
-        search_url: str = "",
-        max_pages: int = 1,
-        search_target: str = "cars",
-    ) -> list:
-        logger.info(f"Fetching from Marketcheck: {search_target} (zip=rotating, radius={RADIUS}mi)")
-        params = TARGET_PARAMS.get(search_target, {})
+def scrape_search(search_target: str = "cars") -> list:
+    logger.info(f"Fetching from Marketcheck: {search_target} (zip=rotating, radius={RADIUS}mi)")
+    params = TARGET_PARAMS.get(search_target, {})
 
-        # Each target gets its own cursor files so runs don't interfere with each other
-        page_cursor_path, zip_cursor_path = _cursor_paths(search_target)
+    # Each target gets its own cursor files so runs don't interfere with each other
+    page_cursor_path, zip_cursor_path = _cursor_paths(search_target)
 
-        raw_listings = self.client.fetch_listings(
-            rows_per_call=self.ROWS_PER_CALL,
-            max_calls=self.CALLS_PER_TARGET,
-            rotate_pages=True,
-            # Marketcheck rejects start >= 500 (422, and the call still
-            # counts). Calls go to start=0 plus 4 pages from the cursor, so
-            # cursor offsets 0-300 (7 pages) keep every start at or below 450.
-            pages_in_rotation=7,
-            page_cursor_path=page_cursor_path,
-            zip_cursor_path=zip_cursor_path,
-            car_type="used",
-            **params,
-        )
+    raw_listings = fetch_listings(
+        page_cursor_path,
+        zip_cursor_path,
+        rows_per_call=ROWS_PER_CALL,
+        max_calls=CALLS_PER_TARGET,
+        # Marketcheck rejects start >= 500 (422, and the call still
+        # counts). Calls go to start=0 plus 4 pages from the cursor, so
+        # cursor offsets 0-300 (7 pages) keep every start at or below 450.
+        pages_in_rotation=7,
+        car_type="used",
+        **params,
+    )
 
-        mapped  = [map_listing(r, search_target) for r in raw_listings]
-        cleaned = [l for l in mapped if l is not None]
-        logger.info(f"Mapped {len(cleaned)}/{len(raw_listings)} listings successfully")
-        return cleaned
+    mapped  = [map_listing(r, search_target) for r in raw_listings]
+    cleaned = [l for l in mapped if l is not None]
+    logger.info(f"Mapped {len(cleaned)}/{len(raw_listings)} listings successfully")
+    return cleaned

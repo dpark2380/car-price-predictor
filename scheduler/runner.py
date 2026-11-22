@@ -19,7 +19,7 @@ from db.models import init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 from db.validation import run_validation
 from scraper.api_usage import NY_TZ, month_total
-from scraper.data_ingest import DataIngestor, MONTHLY_CALL_BUDGET
+from scraper.data_ingest import scrape_search, CALLS_PER_TARGET, MONTHLY_CALL_BUDGET
 from scraper import dealer_sites, vehicle_photos, vehicle_specs
 from ml import pipeline
 from env_utils import env_int
@@ -120,7 +120,6 @@ def scrape_job(
     pop_repo: PopularityRepository,
 ):
     logger.info("▶ Scrape job starting")
-    ingestor = DataIngestor()
     targets = load_targets()
     total_new = 0
     total_upd = 0
@@ -132,7 +131,7 @@ def scrape_job(
             continue
 
         logger.info(f"  Scraping: {name}")
-        listings = ingestor.scrape_search(search_target=name) or []
+        listings = scrape_search(search_target=name) or []
         if listings:
             ins, upd = repo.upsert_listings(listings)
             total_new += ins
@@ -158,7 +157,7 @@ def month_end_topup(repo, pred_repo, pop_repo, now: datetime | None = None) -> i
     now = now or datetime.now(NY_TZ)
     if (now + timedelta(days=1)).month == now.month:
         return 0
-    per_pass = DataIngestor.CALLS_PER_TARGET * len(load_targets())
+    per_pass = CALLS_PER_TARGET * len(load_targets())
     passes = 0
     while passes < 20 and month_total() + per_pass <= MONTHLY_CALL_BUDGET:
         before = month_total()
@@ -216,7 +215,7 @@ def ml_train_job(repo: ListingRepository):
         logger.warning("No data to train on")
         return
 
-    result = pipeline.train(df, repo)
+    result = pipeline.train(df)
 
     if result is None:
         logger.warning("Training did not run (insufficient data)")
@@ -282,48 +281,20 @@ def main():
 
     engine = init_db()
 
-    if args.scrape_only:
+    if any(vars(args).values()):
         session = get_session(engine)
+        repo = ListingRepository(session)
         try:
-            repo = ListingRepository(session)
-            pred = PredictionRepository(session)
-            pop = PopularityRepository(session)
-            scrape_job(repo, pred, pop)
-        finally:
-            session.close()
-        return
-
-    if args.train_only:
-        session = get_session(engine)
-        try:
-            repo = ListingRepository(session)
-            ml_train_job(repo)
-        finally:
-            session.close()
-        return
-
-    if args.specs:
-        session = get_session(engine)
-        try:
-            specs_job(ListingRepository(session), None)
-        finally:
-            session.close()
-        return
-
-    if args.check_dealers:
-        session = get_session(engine)
-        try:
-            dealer_check_job(ListingRepository(session))
-        finally:
-            session.close()
-        return
-
-    if args.score_only:
-        session = get_session(engine)
-        try:
-            repo = ListingRepository(session)
-            pred = PredictionRepository(session)
-            score_job(repo, pred)
+            if args.scrape_only:
+                scrape_job(repo, PredictionRepository(session), PopularityRepository(session))
+            elif args.train_only:
+                ml_train_job(repo)
+            elif args.specs:
+                specs_job(repo, None)
+            elif args.check_dealers:
+                dealer_check_job(repo)
+            elif args.score_only:
+                score_job(repo, PredictionRepository(session))
         finally:
             session.close()
         return

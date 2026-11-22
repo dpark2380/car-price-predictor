@@ -17,7 +17,6 @@ import numpy as np, pandas as pd, sklearn, xgboost
 from sqlalchemy import text
 
 from db.models import init_db, get_session, TRAINING_WINDOW_DAYS
-from db.repository import ListingRepository
 from ml import pipeline
 from ml.pipeline import _vin_groups
 
@@ -57,7 +56,7 @@ def main(as_of: str | None) -> dict:
     df = pd.read_sql(text("select * from training_pool_v where last_seen >= :c order by id"), con,
                      params={"c": cutoff}, parse_dates=["first_seen", "last_seen"])
 
-    result = pipeline.train(df, ListingRepository(session), model_path=None)
+    result = pipeline.train(df, model_path=None)
     if result is None:
         sys.exit("Training did not run (too few rows).")
 

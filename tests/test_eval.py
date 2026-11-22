@@ -169,8 +169,8 @@ def test_monthly_call_budget():
         assert api_usage.month_total() == 7
         data_ingest.MONTHLY_CALL_BUDGET = 7   # reached: no request is made
         tmp = api_usage.USAGE_PATH.parent
-        assert data_ingest.MarketCheckClient().fetch_listings(
-            max_calls=3, page_cursor_path=tmp / "p.json", zip_cursor_path=tmp / "z.json") == []
+        assert data_ingest.fetch_listings(
+            tmp / "p.json", tmp / "z.json", max_calls=3) == []
         assert api_usage.month_total() == 7
     finally:
         api_usage.USAGE_PATH, data_ingest.MONTHLY_CALL_BUDGET = old_path, old_budget
@@ -277,8 +277,7 @@ def test_scrape_call_is_logged():
         api_usage.USAGE_PATH, data_ingest.SCRAPE_CALLS_LOG = tmp / "usage.json", tmp / "calls.jsonl"
         data_ingest.SCRAPE_SAMPLE = tmp / "sample.json"
         data_ingest.requests.get = lambda *a, **k: Resp()
-        data_ingest.MarketCheckClient().fetch_listings(rows_per_call=50, page_cursor_path=tmp / "p.json",
-                                                       zip_cursor_path=tmp / "z.json", car_type="used")
+        data_ingest.fetch_listings(tmp / "p.json", tmp / "z.json", rows_per_call=50, car_type="used")
         line = json.loads(data_ingest.SCRAPE_CALLS_LOG.read_text())
         assert line["listing_ids"] == ["V1-a1", "b2"]        # same ids as car_listings.listing_id
         assert line["num_found"] == 812 and line["start"] == 0 and line["car_type"] == "used"

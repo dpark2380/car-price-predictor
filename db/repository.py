@@ -6,7 +6,6 @@ Abstracts all DB interactions so other modules stay clean.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 
@@ -16,6 +15,10 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from db.models import CarListing, Prediction, PopularitySnapshot, PriceHistory, MIN_PRICE
+
+
+def _df(query) -> pd.DataFrame:
+    return pd.DataFrame([{c.name: getattr(r, c.name) for c in CarListing.__table__.columns} for r in query])
 
 
 # ── Listings ──────────────────────────────────────────────────────────────────
@@ -105,11 +108,7 @@ class ListingRepository:
                 CarListing.mileage.isnot(None),
             )
         )
-        rows = [
-            {c.name: getattr(r, c.name) for c in CarListing.__table__.columns}
-            for r in query.all()
-        ]
-        return pd.DataFrame(rows)
+        return _df(query)
 
     def get_training_listings_df(self) -> pd.DataFrame:
         """
@@ -125,39 +124,6 @@ class ListingRepository:
             text("SELECT * FROM training_listings_v ORDER BY id"),
             self.session.connection(),
             parse_dates=["first_seen", "last_seen"],
-        )
-
-    def get_cohort_stats(self, listing_ids) -> pd.DataFrame:
-        """
-        Median price and count per (make, model, year) over the given
-        car_listings ids — the model's market-relative features. SQLite has
-        no MEDIAN, so rank prices within each cohort and average the middle
-        one (odd n) or two (even n), matching pandas' median.
-
-        Keys are normalised like _build_features_raw (lower + trim).
-        ponytail: SQLite LOWER/TRIM are ASCII-only while pandas' are Unicode;
-        identical for today's data, revisit if non-ASCII makes/models appear.
-        """
-        sql = text("""
-            WITH src AS (
-                SELECT LOWER(TRIM(make)) AS make, LOWER(TRIM(model)) AS model, year, price
-                FROM car_listings
-                WHERE id IN (SELECT value FROM json_each(:ids))
-            ), ranked AS (
-                SELECT *,
-                       ROW_NUMBER() OVER (PARTITION BY make, model, year ORDER BY price) AS rn,
-                       COUNT(*)     OVER (PARTITION BY make, model, year)                AS n
-                FROM src
-            )
-            SELECT make, model, year, AVG(price) AS cohort_median, MAX(n) AS cohort_count
-            FROM ranked
-            WHERE rn IN ((n + 1) / 2, (n + 2) / 2)
-            GROUP BY make, model, year
-            ORDER BY make, model, year
-        """)
-        ids = json.dumps([int(i) for i in listing_ids])
-        return pd.read_sql(sql, self.session.connection(), params={"ids": ids}).set_index(
-            ["make", "model", "year"]
         )
 
     def get_scoring_listings_df(self, min_price: float = MIN_PRICE, max_days_since_seen: int = 180) -> pd.DataFrame:
@@ -180,11 +146,7 @@ class ListingRepository:
                 CarListing.last_seen >= cutoff,
             )
         )
-        rows = [
-            {c.name: getattr(r, c.name) for c in CarListing.__table__.columns}
-            for r in query.all()
-        ]
-        return pd.DataFrame(rows)
+        return _df(query)
 
     def mark_stale_inactive(self, stale_after_days: int = 180) -> int:
         """
@@ -251,18 +213,9 @@ class PredictionRepository:
             if existing:
                 for k, v in pred.items():
                     setattr(existing, k, v)
-                # If your Prediction model uses a different timestamp field, adjust here:
-                if hasattr(existing, "predicted_at"):
-                    existing.predicted_at = now
-                elif hasattr(existing, "scored_at"):
-                    existing.scored_at = now
+                existing.scored_at = now
             else:
-                # Only set timestamp if the model has it
-                if "predicted_at" not in pred and "scored_at" not in pred:
-                    if hasattr(Prediction, "predicted_at"):
-                        pred["predicted_at"] = now
-                    elif hasattr(Prediction, "scored_at"):
-                        pred["scored_at"] = now
+                pred.setdefault("scored_at", now)
                 self.session.add(Prediction(**pred))
 
         self.session.commit()
@@ -302,11 +255,9 @@ class PredictionRepository:
         rows = []
         for listing, pred in results:
             row = {c.name: getattr(listing, c.name) for c in CarListing.__table__.columns}
-
-            # Prediction table fields (these must match your db/models.py)
-            row["predicted_price"] = getattr(pred, "predicted_price", None)
-            row["deal_score"] = getattr(pred, "deal_score", None)
-            row["deal_label"] = getattr(pred, "deal_label", None)
+            row["predicted_price"] = pred.predicted_price
+            row["deal_score"] = pred.deal_score
+            row["deal_label"] = pred.deal_label
 
             rows.append(row)
 

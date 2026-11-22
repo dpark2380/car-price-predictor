@@ -31,7 +31,7 @@ Caveats:
 
 Earlier versions of this README reported much lower error figures. Those are retracted: they came from re-splitting a live database with a random, non-VIN-grouped split, which put training cars (and relisted twins of them) into the test set.
 
-Serving latency, from `scripts/latency_bench.py` on an Apple M5 laptop (localhost, one sequential client, Flask server as started by `start.py`):
+Serving latency, from `scripts/latency_bench.py` on an Apple M5 laptop (localhost, one sequential client, Flask server as started by `python3 api.py`):
 
 | Endpoint | p50 | p95 |
 |---|---|---|
@@ -165,7 +165,7 @@ pip install -r requirements.txt
 
 # 3. Configure environment
 cp .env.example .env
-# edit .env: set MARKETCHECK_API_KEY (required), optionally MARKETCHECK_ZIP / MARKETCHECK_RADIUS / PORT
+# edit .env: set MARKETCHECK_API_KEY (required), optionally MARKETCHECK_RADIUS / PORT
 
 # 4. Build the database and train a model from scratch
 PYTHONPATH=. python3 scheduler/runner.py --scrape-only   # ingest listings into a fresh car_intel.db
@@ -193,19 +193,17 @@ On macOS, `deploy/macmini/setup.sh` and `install.sh` install the scheduled pipel
 
 ## Limitations and next steps
 
-- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split, scoring price floor, deal-score scaling, cohort features, API call budget, spec sheets, photo lookups, price history) and one frontend test (`frontend/src/components/Select.test.jsx`), not CI. `scripts/test_marketcheck_endpoints.py` is a standalone smoke script.
+- Test coverage is one assert-based script (`tests/test_eval.py`: VIN-grouped split, scoring price floor, deal-score scaling, cohort features, API call budget, spec sheets, photo lookups, price history) and one frontend test (`frontend/src/components/Select.test.jsx`), not CI.
 - The deal score is a simple linear heuristic on the gap between predicted and asking price. It isn't calibrated against what cars actually sell for.
 - The model doesn't see vehicle condition or options data, since MarketCheck doesn't return either in structured form. That is the biggest known gap compared with commercial pricing tools.
 - Retraining depends on a single always-on machine (sleep disabled by `install.sh`); there's no failover if it's off, and no alerting if a run fails. The run log and `launchctl print` are the only signals.
 - The saved model is a single `models/price_predictor.joblib` file with no versioning or rollback if a bad training run gets deployed.
-- `requirements.txt` includes `gunicorn`, but neither `Procfile` nor `render.yaml` currently invoke it; both run the Flask dev server directly.
 
 ## Repo structure
 
 ```
 Car-Price-Predictor/
 ├── api.py                        # Flask REST API (port 5001)
-├── start.py                      # Startup wrapper used by Procfile/render.yaml
 ├── requirements.txt
 ├── .env.example                  # Backend environment variables
 ├── config/
@@ -228,9 +226,7 @@ Car-Price-Predictor/
 ├── scripts/
 │   ├── holdout_audit.py          # Held-out test metrics (outputs/holdout_metrics.json)
 │   ├── model_sanity_check.py     # Directional/sanity checks on model predictions
-│   ├── score_audit.py            # Deal score distribution report
-│   ├── autodev_photo_trial.py    # One-off check of Auto.dev photo coverage
-│   └── ...                       # Experiments, benchmarks and endpoint smoke tests
+│   └── ...                       # Experiments and benchmarks
 ├── research/                     # Research notes behind data-source and model decisions
 ├── deploy/macmini/               # LaunchDaemon plists + setup/install scripts for the always-on host
 ├── outputs/

@@ -3,19 +3,12 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 USAGE_PATH = Path("data/api_usage.json")
 NY_TZ = ZoneInfo("America/New_York")
-
-
-@dataclass(frozen=True)
-class ApiCallEvent:
-    provider: str
-    endpoint: str
 
 
 def _today_key() -> str:
@@ -39,47 +32,20 @@ def _atomic_write(path: Path, payload: dict) -> None:
     os.replace(tmp_path, path)
 
 
-def increment_call(event: ApiCallEvent, n: int = 1) -> None:
-    """
-    Increment usage counters for an API call.
-    Stored in data/api_usage.json.
-
-    Structure:
-    {
-      "total": 123,
-      "days": {
-        "2026-02-27": {
-          "total": 12,
-          "providers": {"marketcheck": 12},
-          "endpoints": {"/search/car/active": 6, "/search/car/recent": 6}
-        }
-      }
-    }
-    """
+def increment_call(n: int = 1) -> None:
+    """Add n MarketCheck calls to today's total in data/api_usage.json:
+    {"total": 123, "days": {"2026-02-27": {"total": 12}}}"""
     if n <= 0:
         return
 
     usage = _read_usage()
-    day = _today_key()
-
     usage.setdefault("total", 0)
-    usage.setdefault("days", {})
-
-    day_obj = usage["days"].setdefault(day, {})
-    day_obj.setdefault("total", 0)
-    day_obj.setdefault("providers", {})
-    day_obj.setdefault("endpoints", {})
-
+    day_obj = usage.setdefault("days", {}).setdefault(_today_key(), {"total": 0})
     usage["total"] += n
-    day_obj["total"] += n
-
-    prov = event.provider.lower().strip() or "unknown"
-    ep = event.endpoint.strip() or "unknown"
-
-    day_obj["providers"][prov] = int(day_obj["providers"].get(prov, 0)) + n
-    day_obj["endpoints"][ep] = int(day_obj["endpoints"].get(ep, 0)) + n
+    day_obj["total"] = day_obj.get("total", 0) + n
 
     _atomic_write(USAGE_PATH, usage)
+
 
 def month_total() -> int:
     """Calls recorded so far this calendar month (New York time, like the day keys)."""

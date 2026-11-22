@@ -2,7 +2,7 @@
 scripts/latency_bench.py — p50/p95 latency of the API endpoints and time for a
 full rescoring pass. Read-only (rescoring is timed without saving).
 
-Start the API first (same server as production):  PORT=5057 PYTHONPATH=. python3 start.py
+Start the API first (same server as production):  PORT=5057 python3 api.py
 Then run:  API_BASE=http://127.0.0.1:5057/api PYTHONPATH=. python3 scripts/latency_bench.py
 Sequential single client on localhost: no network, no concurrency.
 """

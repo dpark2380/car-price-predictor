@@ -518,7 +518,7 @@ This section records concrete changes applied to `ml/pipeline.py` and why they w
 
 **Why:** Naive computation lets each row partially see its own price (target leakage); excluding the row's dealer excludes the row too. It also stops a fleet seller (Hertz San Diego is ~1,500 pooled rows) from setting the market median its own listings are scored against, which made its markup look fair by construction. Test MAE moved within seed noise.
 
-**File:** `ml/pipeline.py` — `_dealer_keys()`, `_cohort_ref()`, `_cohort_features()`. `/api/predict` (a car with no dealer) still uses all-dealer stats computed in SQL by `ListingRepository.get_cohort_stats()` in `db/repository.py`. Training rows come pre-filtered from the `training_listings_v` view (`db/models.py`).
+**File:** `ml/pipeline.py` — `_dealer_keys()`, `_cohort_ref()`, `_cohort_features()`. `/api/predict` (a car with no dealer) compares against every dealer's rows in `cohort_ref`. Training rows come pre-filtered from the `training_listings_v` view (`db/models.py`).
 
 ---
 
