@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import './theme.css';
 import App from './car-intel-dashboard';
-import reportWebVitals from './reportWebVitals';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
@@ -11,5 +10,3 @@ root.render(
     <App />
   </React.StrictMode>
 );
-
-reportWebVitals();
