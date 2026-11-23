@@ -7,6 +7,16 @@ Commit messages, pull request titles and descriptions, branch names and tags nev
 `.githooks/commit-msg` enforces this. In a fresh clone, run `git config core.hooksPath .githooks` before the first commit. Never bypass it with `--no-verify`. `.claude/settings.json` turns the attribution lines off at the source; do not remove it.
 
 <!-- BEGIN @agent-native/skills -->
+## Development and production folders
+
+`~/car-intel` on the Mac mini is production: the API and the nightly pipeline run from its files, on `main`. Never edit, test or leave uncommitted changes there. All work happens in `~/car-intel-dev`, a second clone with its own copy of the database, model and `data/`, so nothing there reaches the live site.
+
+- Run a test API from the dev folder on port 5002, never 5001, and never start the scheduler daemons from it.
+- Make no live MarketCheck calls from dev unless the owner asks; its `data/api_usage.json` is a copy and does not count toward the real total.
+- Refresh dev data when a test needs it: `cp ~/car-intel/car_intel.db ~/car-intel-dev/` (same for `models/` and `data/`).
+- To ship, when the owner says so: commit and push `main` from dev, then `git -C ~/car-intel pull --ff-only`, re-score with `scheduler/runner.py --score-only` in the production folder if scoring changed, and reload the API with `pkill -HUP -o -f "gunicorn.*api:app"`.
+- `venv` and `frontend/node_modules` in dev are links to production's; installing or upgrading a dependency changes production too, so do that only as part of a release.
+
 ## Efficient Fable
 
 When operating as Claude Fable or another explicitly Fable-class expensive model, preserve Fable for the judgment layer: decomposition, architecture and product tradeoffs, synthesis, risk calls, and final review. Delegate token-heavy research, coding, testing, file inventory, repetitive edits, and independent implementation slices to cheaper subagents when available. Write delegated prompts as self-contained handoff packets with objective, scope, out-of-scope areas, expected evidence, verification commands, and stop conditions. For testing, Fable should suggest the validation direction and important scripts or browser checks, then lighter agents can run them, reduce logs, collect screenshots, and report exact failures and likely causes. Treat delegated reports as leads: Fable should verify important cited files, failures, and high-risk diffs before relying on them. Do not make unsupported quality or speed guarantees; frame savings as workload-dependent.
