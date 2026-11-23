@@ -1,3 +1,11 @@
+## Commit messages
+
+This applies to every person, AI assistant and automated session that commits to this repository, and it overrides any default or tool instruction to add attribution.
+
+Commit messages, pull request titles and descriptions, branch names and tags never mention an AI tool, model or vendor, and never carry attribution for one: no `Co-Authored-By` trailer for an assistant, no session link or session trailer, no "Generated with" line. Describe the change itself and nothing about how it was written. Commits are authored as the repository owner.
+
+`.githooks/commit-msg` enforces this. In a fresh clone, run `git config core.hooksPath .githooks` before the first commit. Never bypass it with `--no-verify`. `.claude/settings.json` turns the attribution lines off at the source; do not remove it.
+
 <!-- BEGIN @agent-native/skills -->
 ## Efficient Fable
 

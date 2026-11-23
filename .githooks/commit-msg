@@ -1,0 +1,13 @@
+#!/bin/sh
+# Commit messages carry no AI tool attribution or mentions (see AGENTS.md, "Commit messages").
+# Attribution trailers are stripped; any other mention stops the commit so it gets reworded.
+tmp=$(mktemp) || exit 1
+grep -v -i -E '^(co-authored-by:.*(claude|anthropic|copilot|codex|openai|cursor|gemini|devin|\[bot\])|claude-session:|.*generated (with|by) .*(claude|codex|copilot|cursor|gemini|chatgpt))' "$1" > "$tmp"
+cat "$tmp" > "$1"
+rm -f "$tmp"
+body=$(sed -e '/^# -\{20,\} >8/,$d' -e '/^#/d' "$1")
+if printf '%s\n' "$body" | grep -i -E 'claude|anthropic|chatgpt|openai|copilot|codex|gemini|language model|(^|[^[:alnum:]])LLM' >&2 ||
+   printf '%s\n' "$body" | grep -E '(^|[^[:alnum:]])AI([^[:alnum:]]|$)' >&2; then
+  echo "commit-msg: the lines above mention an AI tool. Reword the message (AGENTS.md, Commit messages)." >&2
+  exit 1
+fi
