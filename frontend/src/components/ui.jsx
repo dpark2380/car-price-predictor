@@ -5,11 +5,13 @@ import { fmt$, fmtN, normalizeBodyType } from "../utils/format";
 const PILL_CLASS = ["pill-over", "pill-high", "pill-fair", "pill-good", "pill-great"];
 
 export function DealPill({ score }) {
-  if (score == null) return null;
+  if (score == null) return <span className="pill pill-fair">Not rated</span>;
   return <span className={`pill ${PILL_CLASS[dealTier(score) - 1]}`}>{dealTierLabel(score)}</span>;
 }
 
 // "$6,125 below market" reads the right way round; a signed "Savings" did not.
+export const NOT_RATED_WHY = "Not enough similar cars to rate";
+
 export function vsMarket(savings) {
   if (savings == null) return { text: "", cls: "at" };
   if (Math.abs(savings) < 50) return { text: "At market value", cls: "at" };
@@ -139,9 +141,11 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
         </Title>
         {sub && <div className="card-sub">{sub}</div>}
         <div className="card-price num">{fmt$(deal.price)}</div>
-        <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
-        <div className="card-value num">Market value {fmt$(deal.predicted_price)}</div>
-        <PriceBar score={deal.deal_score} />
+        {deal.deal_score == null ? <div className="card-value">{NOT_RATED_WHY}</div> : <>
+          <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
+          <div className="card-value num">Market value {fmt$(deal.predicted_price)}</div>
+          <PriceBar score={deal.deal_score} />
+        </>}
         <div className="card-specs">
           <span className="num">{fmtN(deal.mileage)} mi</span>
           {place && <span>{place}</span>}

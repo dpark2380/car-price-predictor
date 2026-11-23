@@ -163,7 +163,7 @@ def _deal_records(version):
     """Every graded, non-stale listing as API rows, best deal first. version: _db_version()."""
     session = get_db()
     try:
-        df = PredictionRepository(session).get_top_deals(limit=None, min_deal_score=0)
+        df = PredictionRepository(session).get_top_deals(limit=None, include_unrated=True)
         if df is None or df.empty:
             return []
 
@@ -172,6 +172,7 @@ def _deal_records(version):
         df["deal_score"] = pd.to_numeric(df.get("deal_score"), errors="coerce")
         if "body_type" not in df.columns:
             df["body_type"] = None
+        df["predicted_price"] = df["predicted_price"].where(df["deal_score"].notna())  # not rated: no market value
         df["savings"] = (df["predicted_price"] - df["price"]).round(0)
         seen = pd.to_datetime(df["last_seen"], errors="coerce")
         fresh = (seen >= pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=MAX_DAYS_SINCE_SEEN)) \
@@ -196,6 +197,9 @@ def _deal_records(version):
             "savings":         sf(row.get("savings")),
             "deal_score":      sf(row.get("deal_score")),
             "deal_label":      row.get("deal_label"),
+            "comparables":     si(row.get("comparables")),
+            "typical_error_pct":   sf(row.get("typical_error_pct")),
+            "cohort_median_price": sf(row.get("cohort_median_price")),
             "mileage":         si(row.get("mileage")),
             "location_state":  row.get("location_state"),
             "location_city":   row.get("location_city"),
@@ -322,7 +326,7 @@ def stats():
 
         return jsonify({
             "active_listings": int(repo.count_active()),
-            "graded_listings": len(_deal_records(_db_version())),  # what the site shows
+            "graded_listings": len(_deal_records(_db_version())),  # what the site shows, rated or not
             "makes":           int(df["make"].nunique()) if "make" in df else 0,
             "models":          int(df["model"].nunique()) if "model" in df else 0,
             "avg_price":       sf(df["price"].mean()) if "price" in df else None,

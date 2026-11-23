@@ -79,6 +79,11 @@ class Prediction(Base):
     deal_label      = Column(String)
     model_version   = Column(String)
     scored_at       = Column(DateTime, default=datetime.utcnow)
+    # deal_score is NULL ("Not rated") when ml.pipeline._is_rated says so. These three are
+    # NULL on rows scored before they were added.
+    comparables         = Column(Integer)
+    typical_error_pct   = Column(Float)
+    cohort_median_price = Column(Float)
 
 class PopularitySnapshot(Base):
     __tablename__ = "popularity_snapshots"

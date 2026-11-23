@@ -221,8 +221,9 @@ class PredictionRepository:
         self.session.commit()
         logger.info(f"Saved {len(predictions)} predictions")
 
-    def _graded(self, *entities):
-        """Active listings with a deal score, at or above the price floor.
+    def _graded(self, *entities, unrated=False):
+        """Active listings with a deal score (unrated=True: with or without),
+        at or above the price floor.
         The floor is applied here too because predictions are upserted and
         never deleted, so rows scored before the floor existed linger."""
         return (
@@ -231,25 +232,26 @@ class PredictionRepository:
             .filter(
                 CarListing.is_active == True,  # noqa: E712
                 CarListing.price >= MIN_PRICE,
-                Prediction.deal_score.isnot(None),
+                *([] if unrated else [Prediction.deal_score.isnot(None)]),
             )
         )
 
     def count_graded(self) -> int:
         return int(self._graded(func.count(CarListing.id)).scalar() or 0)
 
-    def get_top_deals(self, limit: int | None = 100, min_deal_score: float = 0.0) -> pd.DataFrame:
+    def get_top_deals(self, limit: int | None = 100, min_deal_score: float = 0.0,
+                      include_unrated: bool = False) -> pd.DataFrame:
         """
         Return best deals currently active; limit=None returns all of them.
 
         deal_score is 0–100 where 100 is best.
-        Filter with >= min_deal_score and sort descending.
+        Filter with >= min_deal_score and sort descending. include_unrated
+        adds the "Not rated" cars (NULL score), last.
         """
-        query = (
-            self._graded(CarListing, Prediction)
-            .filter(Prediction.deal_score >= min_deal_score)
-            .order_by(Prediction.deal_score.desc())
-        )
+        query = self._graded(CarListing, Prediction, unrated=include_unrated)
+        if not include_unrated:
+            query = query.filter(Prediction.deal_score >= min_deal_score)
+        query = query.order_by(Prediction.deal_score.desc())
         results = (query.limit(limit) if limit else query).all()
 
         rows = []
@@ -258,6 +260,9 @@ class PredictionRepository:
             row["predicted_price"] = pred.predicted_price
             row["deal_score"] = pred.deal_score
             row["deal_label"] = pred.deal_label
+            row["comparables"] = pred.comparables
+            row["typical_error_pct"] = pred.typical_error_pct
+            row["cohort_median_price"] = pred.cohort_median_price
 
             rows.append(row)
 

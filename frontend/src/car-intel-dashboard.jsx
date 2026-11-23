@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
 import { Select } from "./components/Select";
-import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
+import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
@@ -230,8 +230,7 @@ export default function CarIntelDashboard() {
 
   const filteredDeals = useMemo(() => {
     const arr = deals
-      .filter((d) => d.deal_score != null)
-      .filter((d) => dealTier(d.deal_score) >= minStars)
+      .filter((d) => minStars <= 1 || (d.deal_score != null && dealTier(d.deal_score) >= minStars))
       .filter((d) => !photoOnly || d.photo_url)
       .filter((d) => !makeFilter || d.make?.toLowerCase() === makeFilter)
       .filter((d) => !modelFilter || d.model?.toLowerCase() === modelFilter)
@@ -492,6 +491,10 @@ export default function CarIntelDashboard() {
                   <div>{text}</div>
                 </li>
               ))}
+              <li>
+                <DealPill score={null} />
+                <div>We've seen no other dealer's car like this, or only one or two with a price far from this one, so there is nothing reliable to compare it with.</div>
+              </li>
             </ul>
             <p className="note">
               Each listing is compared with what our model expects similar cars to list for, allowing for how accurate that estimate usually is at that price. It can't see condition, options or service history, so always check the car itself.
@@ -534,10 +537,16 @@ export default function CarIntelDashboard() {
     const name = `${deal.year} ${deal.make} ${deal.model}`;
     const vm = vsMarket(deal.savings);
     const seen = daysSinceSeen(deal);
-    const similar = deals
-      .filter((d) => d.listing_id !== deal.listing_id && d.make === deal.make && d.model === deal.model && Math.abs(d.year - deal.year) <= 1)
-      .sort((a, b) => b.deal_score - a.deal_score)
-      .slice(0, 3);
+    const rated = deal.deal_score != null;
+    const comps = deals
+      .filter((d) => d.listing_id !== deal.listing_id && d.make === deal.make && d.model === deal.model && Math.abs(d.year - deal.year) <= 1 && d.mileage != null)
+      .sort((a, b) => Math.abs(a.mileage - deal.mileage) - Math.abs(b.mileage - deal.mileage))
+      .slice(0, 5);
+    const k = deal.comparables;
+    const carName = `${deal.year} ${deal.make} ${deal.model}`;
+    const err = deal.typical_error_pct;
+    const mi = comps.map((d) => d.mileage).sort((a, b) => a - b);
+    const milesOff = comps.length >= 3 ? Math.round((deal.mileage - (mi[(mi.length - 1) >> 1] + mi[mi.length >> 1]) / 2) / 1000) * 1000 : 0;
     return (
       <>
         {header}
@@ -550,10 +559,12 @@ export default function CarIntelDashboard() {
               <h1 id="listing-title" style={{ marginTop: 10 }}>{name}</h1>
               <div className="card-sub">{[deal.trim, normalizeBodyType(deal.body_type)].filter((v) => v && v !== "Unknown").join(", ")}</div>
               <div className="card-price num">{fmt$(deal.price)}</div>
-              <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
-              <PriceBar score={deal.deal_score} />
+              {rated ? <>
+                <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
+                <PriceBar score={deal.deal_score} />
+              </> : <p className="note">{NOT_RATED_WHY}</p>}
               <dl className="facts">
-                <dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd>
+                {rated && <><dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd></>}
                 <dt>Mileage</dt><dd className="num">{fmtN(deal.mileage)} mi</dd>
                 <dt>Location</dt><dd>{[deal.location_city, deal.location_state].filter(Boolean).join(", ") || "—"}</dd>
                 <dt>On sale for</dt>
@@ -576,6 +587,49 @@ export default function CarIntelDashboard() {
             </section>
           </div>
 
+          <section className="section" aria-labelledby="why-title">
+            <div className="section-head"><h2 id="why-title">{rated ? "Why this estimate" : "Why there's no rating"}</h2></div>
+            <div className="panel why">
+              {rated ? (
+                <p>
+                  Estimated at {fmt$(deal.predicted_price)}.
+                  {err != null && ` For cars like this the estimate is usually within ${Math.round(err)}% (so ${fmt$(Math.round(deal.predicted_price * (1 - err / 100) / 100) * 100)} to ${fmt$(Math.round(deal.predicted_price * (1 + err / 100) / 100) * 100)}).`}
+                </p>
+              ) : (
+                k >= 1 ? (
+                  <p>Our price model has only {k} other {carName}{k > 1 ? "s" : ""} from other dealers to learn from, and this price is far from what {k === 1 ? "it suggests" : "they suggest"}. With so few to compare, we can't tell a bargain from a bad estimate.</p>
+                ) : (
+                  <p>Our price model has no other {carName} from other dealers to learn from, so we can't say what it should cost.</p>
+                )
+              )}
+              {rated && k != null && deal.cohort_median_price != null && (
+                <p>
+                  Based on {fmtN(k)} other {carName}{k === 1 ? "" : "s"} at other dealers, which typically {k === 1 ? "lists" : "list"} for {fmt$(deal.cohort_median_price)}.
+                  {k <= 2 && " That's very few, so treat the rating as rough."}
+                </p>
+              )}
+              {comps.length > 0 && (
+                <>
+                  <h3>{rated ? `Similar ${deal.make} ${deal.model}s, nearest mileage first` : "Closest we have:"}</h3>
+                  <ul className="why-list">
+                    {comps.map((d) => (
+                      <li key={d.listing_id}>
+                        <a href={listingPath(d.listing_id)} onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                          e.preventDefault();
+                          openListing(d);
+                        }}>{[d.year, d.trim].filter(Boolean).join(" ")}</a>
+                        <span className="num">{fmtN(d.mileage)} mi</span>
+                        <span className="num">{fmt$(d.price)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {Math.abs(milesOff) > 2000 && <p className="note">This car has about {fmtN(Math.abs(milesOff))} {milesOff < 0 ? "fewer" : "more"} miles than these.</p>}
+                </>
+              )}
+            </div>
+          </section>
+
           {specs.length > 0 && (
             <section className="section" aria-labelledby="specs-title">
               <div className="section-head"><h2 id="specs-title">Specifications</h2></div>
@@ -593,14 +647,6 @@ export default function CarIntelDashboard() {
             </section>
           )}
 
-          {similar.length > 0 && (
-            <section className="section" aria-labelledby="similar-title">
-              <div className="section-head"><h2 id="similar-title">Similar {deal.make} {deal.model}s</h2></div>
-              <div className="card-grid">
-                {similar.map((d) => <ListingCard key={d.listing_id} {...cardProps(d)} />)}
-              </div>
-            </section>
-          )}
         </main>
         {footer}
       </>

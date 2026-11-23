@@ -13,7 +13,7 @@ from db.models import init_db, get_session, CarListing, Prediction, MIN_PRICE
 from db.repository import ListingRepository, PredictionRepository
 from ml.pipeline import (_vin_split, _vin_groups, _deal_score_from_prices, _deal_label, _hold_back,
                          _segment_errors, _segment_error_for,
-                         _dealer_keys, _cohort_ref, _cohort_features, PriceRouted)
+                         _is_rated, score_listings, _dealer_keys, _cohort_ref, _cohort_features, PriceRouted)
 
 
 def test_vin_split_disjoint():
@@ -333,7 +333,30 @@ def test_price_history_records_changes():
     assert [p for (p,) in session.query(PriceHistory.price).order_by(PriceHistory.id)] == [12000, 11500]
 
 
+def test_not_rated_without_comparables():
+    assert not _is_rated(0, 50) and _is_rated(1, 50) and _is_rated(None)
+    assert not _is_rated(1, 95) and not _is_rated(2, 10) and _is_rated(3, 95) and _is_rated(2, 15) and not _is_rated(2, 90)
+    import ml.pipeline as pl
+
+    class Flat(BaseEstimator):
+        def predict(self, X): return np.full(len(X), np.log1p(10_000))
+    ref = pd.DataFrame({"make": ["honda"], "model": ["civic"], "year": [2020], "mileage": [30000],
+                        "trim": ["LX"], "dealer": ["other"], "price": [9500.0]})
+    car = {"price": 9000.0, "mileage": 30000, "trim": "LX", "dealer_name": "me", "vin": "", "location_state": "CA"}
+    df = pd.DataFrame([{**car, "listing_id": "seen", "make": "honda", "model": "civic", "year": 2020},
+                       {**car, "listing_id": "alone", "make": "bmw", "model": "m5", "year": 2021}])
+    real_load, pl.load = pl.load, lambda: {"model": Flat(), "cohort_ref": ref, "version": "t"}
+    try:
+        out = {r["listing_id"]: r for r in score_listings(df)}
+    finally:
+        pl.load = real_load
+    assert out["seen"]["deal_score"] is not None and out["seen"]["comparables"] == 1
+    assert out["alone"]["deal_score"] is None and out["alone"]["deal_label"] == "Not rated"
+    assert out["alone"]["predicted_price"] > 0 and out["alone"]["comparables"] == 0
+
+
 if __name__ == "__main__":
+    test_not_rated_without_comparables()
     test_vin_split_disjoint()
     test_price_floor()
     test_deal_score_scales_with_segment_error()

@@ -839,6 +839,17 @@ def _deal_score_from_prices(actual: float, predicted: float,
     return _clamp(score, 0.0, 100.0)
 
 
+def _is_rated(cohort_count: float | None, score: float | None = None) -> bool:
+    """No same make/model/year at other dealers: nothing to grade against. With only
+    1-2 of them, a top or bottom tier rests on too little to tell a bargain from a bad estimate."""
+    if cohort_count is None:
+        return True
+    if cohort_count < 1:
+        return False
+    thin = cohort_count <= THIN_COHORT
+    return not (thin and score is not None and (score >= EXTREME_HIGH_SCORE or score < EXTREME_LOW_SCORE))
+
+
 def _deal_label(score: float) -> str:
     if score >= 90:
         return "5 Stars"
@@ -855,6 +866,12 @@ def _deal_label(score: float) -> str:
 # has already cut the price is more often one buyers passed over (condition,
 # history) than a bargain, so it tops out at 4 Stars.
 HOLD_BACK_DAYS = 90
+
+# Cars with 1-2 comparables are not rated when the score lands in the top or
+# bottom tier (frontend/src/utils/scoreColor.js: Great deal >= 90, Overpriced < 15).
+THIN_COHORT = 2
+EXTREME_HIGH_SCORE = 90
+EXTREME_LOW_SCORE = 15
 
 
 def _hold_back(score: float, days_listed, price_change_percent) -> float:
@@ -901,6 +918,7 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
         logger.warning("Model has no per-segment errors; scoring on the default scale (retrain to fix)")
 
     counts = X["cohort_count"].to_numpy() if "cohort_count" in X else None
+    medians = X["cohort_median_price"].to_numpy() if "cohort_median_price" in X else None
 
     # Keep alignment with df rows
     df = df.reset_index(drop=True)
@@ -914,20 +932,26 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
         if not np.isfinite(actual) or actual <= 0:
             continue
 
-        score = _deal_score_from_prices(
-            actual=actual, predicted=predicted,
-            segment_error_pct=_segment_error_for(
-                actual, segment_errors, None if counts is None else float(counts[i])),
-        )
-        score = _hold_back(round(score, 1), row.get("days_listed"), row.get("price_change_percent"))
+        n = None if counts is None else float(counts[i])
+        err_pct = _segment_error_for(actual, segment_errors, n)
+        score = _hold_back(round(_deal_score_from_prices(actual, predicted, err_pct), 1),
+                           row.get("days_listed"), row.get("price_change_percent"))
+        if _is_rated(n, score):
+            label = _deal_label(score)
+        else:
+            score, label = None, "Not rated"
+        med = None if medians is None or not np.isfinite(medians[i]) else float(medians[i])
 
         results.append(
             {
                 "listing_id": row.get("listing_id"),
                 "predicted_price": round(predicted, 2),
                 "deal_score": score,
-                "deal_label": _deal_label(score),
+                "deal_label": label,
                 "model_version": payload.get("version", "unknown"),
+                "comparables": None if n is None else int(n),
+                "typical_error_pct": round(float(err_pct), 2),
+                "cohort_median_price": med,
             }
         )
 
