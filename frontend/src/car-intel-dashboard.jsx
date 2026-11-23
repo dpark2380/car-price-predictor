@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
 import { Select } from "./components/Select";
-import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, priceCut, vsMarket } from "./components/ui";
+import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
@@ -84,6 +84,7 @@ function fromUrlParams(q, view) {
     milesFrom: get("miles_from"), milesTo: get("miles_to"),
     grade: [1, 3, 4, 5].includes(grade) ? grade : 1,
     photo: get("photo") === "1",
+    reduced: get("reduced") === "1",
     sortKey, sortDir: dir === "asc" || dir === "desc" ? dir : SORTS[sortKey].start,
     year: get("year"), mileage: get("mileage"),
   };
@@ -111,6 +112,8 @@ export default function CarIntelDashboard() {
   const [listingId, setListingId] = useState(initial.listingId);
   const [specs, setSpecs] = useState([]);
   const [photos, setPhotos] = useState([]);
+  const [history, setHistory] = useState(null); // price steps for the open listing; null until the API has them
+  const [options, setOptions] = useState(null);
 
   const isRes = initial.view === "results";
   const [makeFilter, setMakeFilter] = useState(isRes ? initial.make : "");
@@ -125,6 +128,7 @@ export default function CarIntelDashboard() {
   const [maxMileage, setMaxMileage] = useState(initial.milesTo);
   const [minStars, setMinStars] = useState(initial.grade);
   const [photoOnly, setPhotoOnly] = useState(initial.photo);
+  const [reducedOnly, setReducedOnly] = useState(initial.reduced);
   const [sortKey, setSortKey] = useState(initial.sortKey);
   const [sortDir, setSortDir] = useState(initial.sortDir);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -193,6 +197,22 @@ export default function CarIntelDashboard() {
     return () => { live = false; };
   }, [view, listingId]);
 
+  // Price history and factory options come from paid lookups the API makes once per car, and only when it can: nothing shows until then.
+  const openVin = view === "listing" ? (deals.find((d) => d.listing_id === listingId) || preview.find((d) => d.listing_id === listingId))?.vin : null;
+  useEffect(() => {
+    setHistory(null);
+    setOptions(null);
+    if (!openVin) return;
+    let live = true;
+    const load = (path, set) =>
+      fetch(`${API}/${path}?vin=${encodeURIComponent(openVin)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((v) => live && v?.available && set(v))
+        .catch(() => {});
+    load("history", setHistory).then(() => load("options", setOptions)); // one at a time: the API allows one new lookup a day
+    return () => { live = false; };
+  }, [openVin]);
+
   const optionsFor = (rows, key) => Array.from(new Set(rows.map((d) => d[key]?.toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   // Options are lowercased to merge "FORTE" and "Forte"; show each in its most common spelling, so "bmw" reads "BMW".
   const labels = useMemo(() => {
@@ -226,12 +246,13 @@ export default function CarIntelDashboard() {
 
   // The API already leaves out stale ads (unseen for 3 weeks, or on sale 6+ months).
   // Home page: only cars with a photo; the full listings page still shows all.
-  const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null && d.photo_url).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
+  const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null && !d.rating_basis && d.photo_url).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
 
   const filteredDeals = useMemo(() => {
     const arr = deals
       .filter((d) => minStars <= 1 || (d.deal_score != null && dealTier(d.deal_score) >= minStars))
       .filter((d) => !photoOnly || d.photo_url)
+      .filter((d) => !reducedOnly || d.reduced)
       .filter((d) => !makeFilter || d.make?.toLowerCase() === makeFilter)
       .filter((d) => !modelFilter || d.model?.toLowerCase() === modelFilter)
       .filter((d) => !bodyFilter || normalizeBodyType(d.body_type).toLowerCase() === bodyFilter.toLowerCase())
@@ -261,13 +282,13 @@ export default function CarIntelDashboard() {
       if (x === null || y === null) return (x === null) - (y === null);
       return x === y ? num(b.deal_score) - num(a.deal_score) : (x - y) * dir;
     });
-  }, [deals, minStars, photoOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
+  }, [deals, minStars, photoOnly, reducedOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
   // Thousands of cards at once would make the page sluggish: render a slice.
-  useEffect(() => setVisibleCount(60), [minStars, photoOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
+  useEffect(() => setVisibleCount(60), [minStars, photoOnly, reducedOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
 
-  const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minPrice || maxPrice || minYear || maxYear || minMileage || maxMileage || minStars > 1 || photoOnly;
-  const activeFilterCount = [makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice || maxPrice, minYear || maxYear, minMileage || maxMileage, minStars > 1, photoOnly].filter(Boolean).length;
+  const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minPrice || maxPrice || minYear || maxYear || minMileage || maxMileage || minStars > 1 || photoOnly || reducedOnly;
+  const activeFilterCount = [makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice || maxPrice, minYear || maxYear, minMileage || maxMileage, minStars > 1, photoOnly, reducedOnly].filter(Boolean).length;
 
   // Keep the address bar in step with the view and its inputs. A new view is
   // a history entry (Back returns to it); input changes replace the current
@@ -275,7 +296,7 @@ export default function CarIntelDashboard() {
   useEffect(() => {
     const url =
       view === "results"
-        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", photo: photoOnly ? "1" : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== SORTS[sortKey].start ? sortDir : "" })
+        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", photo: photoOnly ? "1" : "", reduced: reducedOnly ? "1" : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== SORTS[sortKey].start ? sortDir : "" })
         : view === "estimator"
         ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
         : view === "listing"
@@ -288,7 +309,7 @@ export default function CarIntelDashboard() {
     } else {
       window.history.replaceState(null, "", url);
     }
-  }, [view, listingId, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, photoOnly, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
+  }, [view, listingId, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, photoOnly, reducedOnly, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
 
   useEffect(() => {
     document.title = PAGE_TITLES[view];
@@ -303,7 +324,7 @@ export default function CarIntelDashboard() {
       if (u.view === "results") {
         setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
         setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
-        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setSortKey(u.sortKey); setSortDir(u.sortDir);
+        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setReducedOnly(u.reduced); setSortKey(u.sortKey); setSortDir(u.sortDir);
       } else if (u.view === "estimator") {
         setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
       }
@@ -343,7 +364,7 @@ export default function CarIntelDashboard() {
   const resetFilters = () => {
     setMakeFilter(""); setModelFilter(""); setSizeFilter(""); setBodyFilter("");
     setMinPrice(""); setMaxPrice(""); setMinYear(""); setMaxYear("");
-    setMinMileage(""); setMaxMileage(""); setMinStars(1); setPhotoOnly(false);
+    setMinMileage(""); setMaxMileage(""); setMinStars(1); setPhotoOnly(false); setReducedOnly(false);
   };
 
   // Real links (middle-click and copy work) that switch views in place.
@@ -562,6 +583,7 @@ export default function CarIntelDashboard() {
               {rated ? <>
                 <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
                 <PriceBar score={deal.deal_score} />
+                {deal.rating_basis && <p className="note">Rough rating</p>}
               </> : <p className="note">{NOT_RATED_WHY}</p>}
               <dl className="facts">
                 {rated && <><dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd></>}
@@ -569,7 +591,7 @@ export default function CarIntelDashboard() {
                 <dt>Location</dt><dd>{[deal.location_city, deal.location_state].filter(Boolean).join(", ") || "—"}</dd>
                 <dt>On sale for</dt>
                 <dd className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>{fmtN(daysOnSale(deal))} days</dd>
-                {priceCut(deal) && <><dt>Price cut</dt><dd className="num">{priceCut(deal)}{deal.ref_price ? ` (was ${fmt$(deal.ref_price)})` : ""}</dd></>}
+                {deal.reduced && <><dt>Reduced</dt><dd className="num">Was {fmt$(deal.reduced.was)}, now {fmt$(deal.price)} (−{Math.round(deal.reduced.pct)}%)</dd></>}
                 <dt>Last seen</dt>
                 <dd className={seen > 7 ? "caution" : ""}>{seen == null ? "—" : seen <= 1 ? "In the last day" : `${seen} days ago`}</dd>
                 {deal.dealer_name && <><dt>Dealer</dt><dd>{deal.dealer_name}</dd></>}
@@ -590,7 +612,9 @@ export default function CarIntelDashboard() {
           <section className="section" aria-labelledby="why-title">
             <div className="section-head"><h2 id="why-title">{rated ? "Why this estimate" : "Why there's no rating"}</h2></div>
             <div className="panel why">
-              {rated ? (
+              {deal.rating_basis ? (
+                <p>Rated against {fmtN(deal.market.count)} listed across the US (median {fmt$(deal.market.median)}), because our own data has too few of this car. Treat it as rough: it ignores mileage and region.</p>
+              ) : rated ? (
                 <p>
                   Estimated at {fmt$(deal.predicted_price)}.
                   {err != null && ` For cars like this the estimate is usually within ${Math.round(err)}% (so ${fmt$(Math.round(deal.predicted_price * (1 - err / 100) / 100) * 100)} to ${fmt$(Math.round(deal.predicted_price * (1 + err / 100) / 100) * 100)}).`}
@@ -602,7 +626,10 @@ export default function CarIntelDashboard() {
                   <p>Our price model has no other {carName} from other dealers to learn from, so we can't say what it should cost.</p>
                 )
               )}
-              {rated && k != null && deal.cohort_median_price != null && (
+              {!rated && deal.market && (
+                <p>Across the US, {fmtN(deal.market.count)} are listed by dealers, typically for {fmt$(deal.market.median)} (most between {fmt$(deal.market.p25)} and {fmt$(deal.market.p75)}).</p>
+              )}
+              {rated && !deal.rating_basis && k != null && deal.cohort_median_price != null && (
                 <p>
                   Based on {fmtN(k)} other {carName}{k === 1 ? "" : "s"} at other dealers, which typically {k === 1 ? "lists" : "list"} for {fmt$(deal.cohort_median_price)}.
                   {k <= 2 && " That's very few, so treat the rating as rough."}
@@ -629,6 +656,49 @@ export default function CarIntelDashboard() {
               )}
             </div>
           </section>
+
+          {history?.points?.length > 1 && (() => {
+            const pts = history.points;
+            const first = pts[0];
+            const diff = first.price - deal.price;
+            const month = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+            return (
+              <section className="section" aria-labelledby="history-title">
+                <div className="section-head"><h2 id="history-title">Price history</h2></div>
+                <div className="panel why">
+                  <p>First seen at {fmt$(first.price)} in {month(first.date)}; {diff > 0 ? `${fmt$(diff)} lower now` : diff < 0 ? `${fmt$(-diff)} higher now` : "the same price now"}.</p>
+                  <ul className="why-list">
+                    {pts.map((p, i) => (
+                      <li key={`${p.date}-${i}`}>
+                        <span className="num">{p.date}</span>
+                        <span className="num">{fmt$(p.price)}</span>
+                        <span className="num">{i === 0 ? "" : `${p.price < pts[i - 1].price ? "−" : "+"}${fmt$(Math.abs(p.price - pts[i - 1].price))}`}</span>
+                        <span className="num">{p.miles != null ? `${fmtN(p.miles)} mi` : ""}</span>
+                        <span>{p.seller}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </section>
+            );
+          })()}
+
+          {options?.options?.length > 0 && (
+            <section className="section" aria-labelledby="options-title">
+              <div className="section-head"><h2 id="options-title">Factory options</h2></div>
+              <div className="panel why">
+                {options.combined_msrp != null && <p>Sticker price when new: {fmt$(options.combined_msrp)}</p>}
+                <ul className="why-list">
+                  {options.options.map((o, i) => (
+                    <li key={`${o.code}-${i}`}>
+                      <span>{o.name}</span>
+                      <span className="num">{o.msrp != null ? fmt$(o.msrp) : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+          )}
 
           {specs.length > 0 && (
             <section className="section" aria-labelledby="specs-title">
@@ -827,6 +897,10 @@ export default function CarIntelDashboard() {
             <label className="check-option">
               <input type="checkbox" checked={photoOnly} onChange={(e) => setPhotoOnly(e.target.checked)} />
               Only cars with a photo
+            </label>
+            <label className="check-option">
+              <input type="checkbox" checked={reducedOnly} onChange={(e) => setReducedOnly(e.target.checked)} />
+              Recently reduced
             </label>
           </aside>
 

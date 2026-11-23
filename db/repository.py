@@ -14,7 +14,7 @@ from loguru import logger
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from db.models import CarListing, Prediction, PopularitySnapshot, PriceHistory, MIN_PRICE
+from db.models import CarListing, MarketStats, Prediction, PopularitySnapshot, PriceHistory, MIN_PRICE
 
 
 def _df(query) -> pd.DataFrame:
@@ -68,7 +68,7 @@ class ListingRepository:
                     "scrape_source", "photo_url", "photo_urls",
                     "transmission", "drivetrain", "fuel_type", "powertrain_type", "engine_size",
                     "cylinders", "doors", "seats", "city_mpg", "highway_mpg", "carfax_1_owner",
-                    "ref_price", "price_change_percent", "dom_active",
+                    "ref_price", "price_change_percent", "dom_active", "msrp",
                 }
                 for k in mutable_fields:
                     v = data.get(k)
@@ -147,6 +147,11 @@ class ListingRepository:
             )
         )
         return _df(query)
+
+    def get_market_stats(self, min_count: int = 5) -> dict:
+        """US-wide asking prices per (make, model, year), from MarketStats."""
+        return {(m.make, m.model, m.year): {"count": m.listing_count, "median": m.price_median, "p25": m.price_p25, "p75": m.price_p75}
+                for m in self.session.query(MarketStats).filter(MarketStats.listing_count >= min_count, MarketStats.price_median.isnot(None))}
 
     def mark_stale_inactive(self, stale_after_days: int = 180) -> int:
         """
@@ -232,7 +237,7 @@ class PredictionRepository:
             .filter(
                 CarListing.is_active == True,  # noqa: E712
                 CarListing.price >= MIN_PRICE,
-                *([] if unrated else [Prediction.deal_score.isnot(None)]),
+                *([] if unrated else [Prediction.deal_score.isnot(None), Prediction.rating_basis.is_(None)]),  # no rough national ratings
             )
         )
 
@@ -263,6 +268,7 @@ class PredictionRepository:
             row["comparables"] = pred.comparables
             row["typical_error_pct"] = pred.typical_error_pct
             row["cohort_median_price"] = pred.cohort_median_price
+            row["rating_basis"] = pred.rating_basis
 
             rows.append(row)
 

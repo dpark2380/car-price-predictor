@@ -874,18 +874,41 @@ EXTREME_HIGH_SCORE = 90
 EXTREME_LOW_SCORE = 15
 
 
+# Rough rating for cars _is_rated leaves out: where the price sits in the US-wide
+# spread (MarketStats). Median = 50, p25 = 75, p75 = 25, then held out of the top
+# and bottom tiers. Needs this many US listings; the model's score, if any, gets
+# the remaining weight. ponytail: ignores mileage and region; untested against outcomes.
+NATIONAL_MIN_COUNT = 30
+NATIONAL_WEIGHT = 0.7
+
+
+def _national_score(price: float, stats: dict | None, model_score: float | None = None) -> float | None:
+    """stats: {count, median, p25, p75}. None when the US-wide figures are missing or too thin."""
+    if not stats or (stats.get("count") or 0) < NATIONAL_MIN_COUNT or any(stats.get(k) is None for k in ("median", "p25", "p75")):
+        return None
+    side = stats["median"] - stats["p25"] if price <= stats["median"] else stats["p75"] - stats["median"]
+    if side <= 0:
+        return None
+    score = 50 + 25 * (stats["median"] - price) / side
+    if model_score is not None:
+        score = NATIONAL_WEIGHT * score + (1 - NATIONAL_WEIGHT) * model_score
+    return round(_clamp(score, EXTREME_LOW_SCORE, EXTREME_HIGH_SCORE - 0.1), 1)
+
+
 def _hold_back(score: float, days_listed, price_change_percent) -> float:
     stale_and_cut = (pd.notna(days_listed) and days_listed >= HOLD_BACK_DAYS
                      and pd.notna(price_change_percent) and price_change_percent < 0)
     return min(score, 89.9) if stale_and_cut else score
 
 
-def score_listings(df: pd.DataFrame) -> list[dict]:
+def score_listings(df: pd.DataFrame, market: dict | None = None) -> list[dict]:
     """
     Produces a 0–100 deal_score where:
       - 100 = best deal (most under market)
       - 50  = fair price
       - 0   = worst deal (most over market)
+    market: {(make, model, year): {count, median, p25, p75}}; cars the model can't rate
+    get a rough rating from it (rating_basis "national"), or stay unrated without one.
     """
     payload = load()
     if payload is None:
@@ -936,10 +959,12 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
         err_pct = _segment_error_for(actual, segment_errors, n)
         score = _hold_back(round(_deal_score_from_prices(actual, predicted, err_pct), 1),
                            row.get("days_listed"), row.get("price_change_percent"))
+        basis = None
         if _is_rated(n, score):
             label = _deal_label(score)
         else:
-            score, label = None, "Not rated"
+            score = _national_score(actual, (market or {}).get((row["make"], row["model"], int(row["year"]))), score)
+            label, basis = (_deal_label(score), "national") if score is not None else ("Not rated", None)
         med = None if medians is None or not np.isfinite(medians[i]) else float(medians[i])
 
         results.append(
@@ -952,6 +977,7 @@ def score_listings(df: pd.DataFrame) -> list[dict]:
                 "comparables": None if n is None else int(n),
                 "typical_error_pct": round(float(err_pct), 2),
                 "cohort_median_price": med,
+                "rating_basis": basis,
             }
         )
 

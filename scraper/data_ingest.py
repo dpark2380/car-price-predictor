@@ -228,6 +228,7 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "carfax_1_owner": None if raw.get("carfax_1_owner") is None else int(bool(raw["carfax_1_owner"])),
             # Price-cut history: outcomes of pricing, for the deal display and
             # validation only, never price-model features.
+            "msrp":           _num(raw.get("msrp"), float) or None,   # <= 0 is junk
             "ref_price":      _num(raw.get("ref_price"), float),
             "price_change_percent": _num(raw.get("price_change_percent"), float),
             "dom_active":     _num(raw.get("dom_active"), int),
@@ -430,3 +431,38 @@ def scrape_search(search_target: str = "cars") -> list:
     cleaned = [l for l in mapped if l is not None]
     logger.info(f"Mapped {len(cleaned)}/{len(raw_listings)} listings successfully")
     return cleaned
+
+
+MC_URL = "https://api.marketcheck.com/v2"
+CALL_CAP = 480  # the plan allows 500 a month; leave room for the scraper
+RANGES = {"hp": (40, 2000), "torque": (40, 2500), "zero_to_sixty": (1.5, 25.0)}
+
+
+def mc_get(path: str, params: dict) -> dict | list:
+    """One counted MarketCheck GET; refuses past CALL_CAP. Errors carry no api key."""
+    if month_total() >= CALL_CAP:
+        raise RuntimeError(f"month's call count is at {CALL_CAP}, not calling")
+    increment_call()
+    try:
+        r = requests.get(f"{MC_URL}/{path}", params={"api_key": API_KEY, **params}, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        raise RuntimeError(_redact(e)) from None
+
+
+def extract(payload: dict) -> tuple[dict, dict]:
+    """({hp, torque, zero_to_sixty}, {field: option code or "STANDARD"}); implausible or missing values are left out."""
+    equip = payload.get("installed_equipment") if isinstance(payload, dict) else None
+    vals, src = {}, {}
+    for code in sorted(equip or {}, key=lambda c: c != "STANDARD"):  # STANDARD first, options override
+        for e in equip[code] if isinstance(equip[code], list) else []:
+            if not isinstance(e, dict) or str(e.get("category")).lower() != "engine":
+                continue
+            a = str(e.get("attribute")).lower()
+            field = "hp" if "power" in a and "hp" in a else "torque" if "torque" in a and "lb" in a else "zero_to_sixty" if "0-60" in a else None
+            m = re.search(r"\d+(?:\.\d+)?", str(e.get("value")))  # "600/608" -> 600
+            if field and m and RANGES[field][0] <= float(m[0]) <= RANGES[field][1]:
+                vals[field] = float(m[0]) if field == "zero_to_sixty" else int(float(m[0]))
+                src[field] = code
+    return vals, src

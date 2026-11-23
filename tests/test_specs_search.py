@@ -59,3 +59,16 @@ if __name__ == "__main__":
     test_zero()
     test_cost()
     print("ok")
+
+
+def test_decode_extract():
+    from scripts.specs_decode_backfill import extract
+    e = lambda attr, v: {"category": "Engine", "attribute": attr, "value": v}
+    std = [e("Maximum power hp/PS", "600/608"), e("maximum torque lb ft", "553"), e("acceleration 0-60 mph", "3.2"),
+           {"category": "Body", "attribute": "Maximum power hp/PS", "value": "1"}]
+    opt = [e("Maximum power hp/PS", "617"), e("acceleration 0-60 mph", "fast"), e("maximum torque lb ft", "99999")]
+    assert extract({"installed_equipment": {"STANDARD": std, "ZCP": opt}}) == (
+        {"hp": 617, "torque": 553, "zero_to_sixty": 3.2}, {"hp": "ZCP", "torque": "STANDARD", "zero_to_sixty": "STANDARD"})
+    assert extract({"installed_equipment": {"ZCP": opt, "STANDARD": std}})[0]["hp"] == 617   # key order irrelevant
+    assert extract({"installed_equipment": None}) == ({}, {}) and extract({}) == ({}, {}) and extract(None) == ({}, {})
+    assert extract({"installed_equipment": {"STANDARD": "junk"}}) == ({}, {})

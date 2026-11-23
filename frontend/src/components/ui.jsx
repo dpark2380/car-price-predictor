@@ -109,10 +109,6 @@ export const daysOnSale = (deal) => (deal.days_listed ?? 0) + (daysSinceSeen(dea
 // wait usually means price cuts on a car buyers passed over, so say so.
 export const STALE_DAYS = 90;
 
-// Size of the dealer's last price cut, e.g. "8%"; null if none reported.
-export const priceCut = (deal) =>
-  deal.price_change_percent < 0 ? `${Math.round(-deal.price_change_percent) || "<1"}%` : null;
-
 // level: the heading level of the title, one below the section it sits in.
 export function ListingCard({ deal, href, onOpen, level = 3 }) {
   const Title = `h${level}`;
@@ -143,14 +139,14 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
         <div className="card-price num">{fmt$(deal.price)}</div>
         {deal.deal_score == null ? <div className="card-value">{NOT_RATED_WHY}</div> : <>
           <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
-          <div className="card-value num">Market value {fmt$(deal.predicted_price)}</div>
+          <div className="card-value num">Market value {fmt$(deal.predicted_price)}{deal.rating_basis && " · rough rating"}</div>
           <PriceBar score={deal.deal_score} />
         </>}
         <div className="card-specs">
           <span className="num">{fmtN(deal.mileage)} mi</span>
           {place && <span>{place}</span>}
           <span className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>Listed {fmtN(daysOnSale(deal))} days</span>
-          {priceCut(deal) && <span className="num">Price cut {priceCut(deal)}</span>}
+          {deal.reduced && <span className="num">Reduced {fmt$(deal.reduced.amount)}</span>}
           {deal.first_seen && <span className="num">Found {new Date(deal.first_seen).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
         </div>
       </div>

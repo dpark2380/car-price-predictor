@@ -7,6 +7,8 @@ import functools
 import json
 import math
 import os
+import re
+import threading
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -15,9 +17,11 @@ from flask_cors import CORS
 from loguru import logger
 from werkzeug.exceptions import HTTPException
 
-from db.models import CarListing, init_db, get_session
+from db.models import CarListing, VinHistory, VinOptions, init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 from scraper import vehicle_specs
+from scraper.api_usage import month_total
+from scraper.data_ingest import CALL_CAP, extract, mc_get
 
 app = Flask(__name__)
 # Browsers may call the API only from the public dashboard, the Mac mini's LAN
@@ -158,6 +162,16 @@ MAX_DAYS_SINCE_SEEN = 21
 MAX_DAYS_LISTED = 180
 
 
+def _reduced(was, now):
+    """{was, amount, pct} when the dealer's earlier price is believable: the feed has junk
+    like a $999,900 ref_price on a $9,999 car, so only drops of 1-40% count."""
+    was, now = sf(was), sf(now)
+    if not was or not now or was <= now:
+        return None
+    pct = (was - now) / was * 100
+    return {"was": was, "amount": round(was - now), "pct": round(pct, 1)} if 1 <= pct <= 40 else None
+
+
 @functools.lru_cache(maxsize=1)
 def _deal_records(version):
     """Every graded, non-stale listing as API rows, best deal first. version: _db_version()."""
@@ -166,6 +180,7 @@ def _deal_records(version):
         df = PredictionRepository(session).get_top_deals(limit=None, include_unrated=True)
         if df is None or df.empty:
             return []
+        market_stats = ListingRepository(session).get_market_stats()
 
         df["price"] = pd.to_numeric(df.get("price"), errors="coerce")
         df["predicted_price"] = pd.to_numeric(df.get("predicted_price"), errors="coerce")
@@ -173,6 +188,9 @@ def _deal_records(version):
         if "body_type" not in df.columns:
             df["body_type"] = None
         df["predicted_price"] = df["predicted_price"].where(df["deal_score"].notna())  # not rated: no market value
+        # Rough national ratings: the model's estimate is why those cars weren't rated, so "market value" is the US median.
+        nat = df["rating_basis"].eq("national")
+        df.loc[nat, "predicted_price"] = [market_stats.get((r.make, r.model, int(r.year)), {}).get("median") for r in df[nat].itertuples()]
         df["savings"] = (df["predicted_price"] - df["price"]).round(0)
         seen = pd.to_datetime(df["last_seen"], errors="coerce")
         fresh = (seen >= pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=MAX_DAYS_SINCE_SEEN)) \
@@ -183,9 +201,12 @@ def _deal_records(version):
         reachable = ~df["url"].map(host_of).isin(down) if down else True
         df = df[fresh & reachable].sort_values("deal_score", ascending=False)
 
+        # US-wide figures for cars rated or shown from them (one query; cached with the rest by _db_version)
+        market = market_stats
         return [{
             "listing_id":      row.get("listing_id"),
             "url":             row.get("url"),
+            "vin":             ss(row.get("vin")),
             "photo_url":       ss(row.get("photo_url")),
             "year":            si(row.get("year")),
             "make":            row.get("make"),
@@ -198,6 +219,8 @@ def _deal_records(version):
             "deal_score":      sf(row.get("deal_score")),
             "deal_label":      row.get("deal_label"),
             "comparables":     si(row.get("comparables")),
+            "market":          None if pd.notna(row.get("deal_score")) and row.get("rating_basis") != "national" else market.get((row.get("make"), row.get("model"), si(row.get("year")))),
+            "rating_basis":    ss(row.get("rating_basis")),
             "typical_error_pct":   sf(row.get("typical_error_pct")),
             "cohort_median_price": sf(row.get("cohort_median_price")),
             "mileage":         si(row.get("mileage")),
@@ -211,6 +234,7 @@ def _deal_records(version):
             # Last price cut (negative %) and the price before it; display only.
             "price_change_percent": sf(row.get("price_change_percent")),
             "ref_price":       sf(row.get("ref_price")),
+            "reduced":         _reduced(row.get("ref_price"), row.get("price")),
             # Date our scraper last saw the ad live; older means it may have sold.
             "last_seen":       str(row.get("last_seen"))[:10] if row.get("last_seen") is not None else None,
             # When our scraper first found the ad (UTC), for the "Date found" sort.
@@ -266,6 +290,88 @@ def specs():
     if sheet is None:
         abort(404, "no such listing")
     return jsonify(sheet)
+
+
+# On-demand MarketCheck lookups (history, options) for the listing page. They spend the
+# monthly quota, so: only VINs of active listings, results kept for good, and one shared
+# daily cap, counted in the tables themselves (a failed or in-flight attempt keeps its slot).
+ON_DEMAND_PER_DAY = 1
+_VIN = re.compile(r"[A-HJ-NPR-Z0-9]{17}")
+_on_demand_lock = threading.Lock()  # ponytail: one process; a second worker would need a DB-level reservation
+HISTORY_POINTS = 20
+
+
+def _collapse_history(rows):
+    """MarketCheck history (newest first, one row per site) -> price steps, oldest first, at most HISTORY_POINTS.
+    A dealer group lists one car on many sites at once, so a step is a change in (price, miles)."""
+    pts = []
+    for r in sorted((r for r in rows if isinstance(r, dict) and sf(r.get("price"))), key=lambda r: str(r.get("first_seen_at_date"))):
+        p = {"date": str(r.get("first_seen_at_date") or "")[:10], "price": sf(r["price"]), "miles": si(r.get("miles")),
+             "seller": r.get("seller_name"), "city": r.get("city"), "state": r.get("state")}
+        if not pts or (p["price"], p["miles"]) != (pts[-1]["price"], pts[-1]["miles"]):
+            pts.append(p)
+    return pts if len(pts) <= HISTORY_POINTS else pts[:1] + pts[-(HISTORY_POINTS - 1):]
+
+
+def _on_demand(table, column, call, shape):
+    """Stored result for ?vin=, else (within the caps) one MarketCheck call, stored. {"available": false} otherwise."""
+    vin = request.args.get("vin", "").strip().upper()
+    if not _VIN.fullmatch(vin):
+        abort(400, "vin must be 17 letters and digits")
+    session = get_db()
+    try:
+        if session.query(CarListing.id).filter_by(vin=vin, is_active=1).first() is None:
+            abort(404, "no such listing")
+        with _on_demand_lock:
+            row = session.get(table, vin)
+            if row is not None and getattr(row, column) is not None:
+                return jsonify({"available": True, **json.loads(getattr(row, column))})
+            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            used = sum(session.query(t).filter(t.fetched_at >= today).count() for t in (VinHistory, VinOptions))
+            if used >= ON_DEMAND_PER_DAY or month_total() >= CALL_CAP or (row is not None and row.fetched_at >= today):
+                return jsonify({"available": False})
+            if row is None:
+                row = table(vin=vin)
+                session.add(row)
+            row.fetched_at = datetime.utcnow()
+            session.commit()  # reserve the slot before the call
+            try:
+                result = shape(call(vin))
+            except Exception as e:  # RuntimeError from mc_get is already key-free; the reserved slot stays used
+                logger.warning(f"on-demand lookup failed for {table.__tablename__}: {e}")
+                return jsonify({"available": False})
+            setattr(row, column, json.dumps(result))
+            session.commit()
+            return jsonify({"available": True, **result})
+    finally:
+        session.close()
+
+
+def _history_shape(payload):
+    if not isinstance(payload, list):
+        raise ValueError("history is not a list")
+    return {"points": _collapse_history(payload)}
+
+
+def _options_shape(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("decode is not an object")
+    opts = [{"code": o.get("code"), "name": o.get("name"), "msrp": sf(o.get("msrp"))}
+            for o in payload.get("installed_options_details") or [] if isinstance(o, dict) and o.get("name")]
+    return {"options": opts, "combined_msrp": sf(payload.get("combined_msrp")), **extract(payload)[0]}
+
+
+@app.route("/api/history")
+def history():
+    """Price history for one active listing's VIN (query param: vin): [{date, price, miles, seller, city, state}], oldest first."""
+    return _on_demand(VinHistory, "rows", lambda vin: mc_get(f"history/car/{vin}", {"sort_order": "desc"}),
+                      _history_shape)
+
+
+@app.route("/api/options")
+def options():
+    """Factory options and sticker price for one active listing's VIN (query param: vin)."""
+    return _on_demand(VinOptions, "data", lambda vin: mc_get(f"decode/car/neovin/{vin}/specs", {}), _options_shape)
 
 
 @app.route("/api/photos")

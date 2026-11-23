@@ -179,7 +179,7 @@ def score_job(repo: ListingRepository, pred_repo: PredictionRepository):
         logger.warning("No listings to score")
         return
 
-    predictions = pipeline.score_listings(df) or []
+    predictions = pipeline.score_listings(df, repo.get_market_stats()) or []
     if predictions:
         pred_repo.save_predictions(predictions)
 

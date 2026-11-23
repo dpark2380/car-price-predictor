@@ -43,6 +43,7 @@ class CarListing(Base):
     city_mpg       = Column(Integer)
     highway_mpg    = Column(Integer)
     carfax_1_owner = Column(Integer)   # 1/0 as reported; 0 is "not reported" at independents
+    msrp           = Column(Float)     # as listed; often just the asking price on used cars, so not a model feature (research/marketcheck_mcp_research.md)
     ref_price      = Column(Float)     # price-cut history: display/validation only,
     price_change_percent = Column(Float)  # never price-model features (outcomes of pricing)
     dom_active     = Column(Integer)
@@ -84,6 +85,8 @@ class Prediction(Base):
     comparables         = Column(Integer)
     typical_error_pct   = Column(Float)
     cohort_median_price = Column(Float)
+    # "national" = a rough rating from US-wide MarketStats (ml.pipeline._national_score), not the model's; NULL otherwise.
+    rating_basis        = Column(String)
 
 class PopularitySnapshot(Base):
     __tablename__ = "popularity_snapshots"
@@ -146,6 +149,38 @@ class EngineSpecs(Base):
     raw         = Column(Text)                       # model answer + cited text, for audit
     fetched_at  = Column(DateTime, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint("year", "make", "model", "engine_size", "fuel"),)
+
+
+class VinHistory(Base):
+    """On-demand MarketCheck listing history for one VIN (api.py /api/history): collapsed price steps as JSON.
+    rows is NULL while the call is in flight or after it failed; either way it counts toward ON_DEMAND_PER_DAY."""
+    __tablename__ = "vin_history"
+    vin        = Column(String, primary_key=True)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+    rows       = Column(Text)
+
+
+class VinOptions(Base):
+    """On-demand MarketCheck NeoVIN decode extract for one VIN (api.py /api/options): factory options, sticker price, hp/torque/0-60."""
+    __tablename__ = "vin_options"
+    vin        = Column(String, primary_key=True)
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+    data       = Column(Text)   # NULL as in VinHistory.rows
+
+
+class MarketStats(Base):
+    """US-wide asking prices for a make/model/year (scripts/market_stats_backfill.py), shown for cars we can't rate."""
+    __tablename__ = "market_stats"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    make          = Column(String, nullable=False)   # as in car_listings
+    model         = Column(String, nullable=False)
+    year          = Column(Integer, nullable=False)
+    listing_count = Column(Integer)
+    price_median  = Column(Float)
+    price_p25     = Column(Float)
+    price_p75     = Column(Float)
+    fetched_at    = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("make", "model", "year"),)
 
 
 DB_PATH = "sqlite:///car_intel.db"
