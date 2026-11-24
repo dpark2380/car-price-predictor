@@ -6,6 +6,8 @@ import { marketPath as marketUrl } from "./market/api";
 import { plural } from "./market/format";
 import { BrandMark, CardSkeleton, Certified, DealPill, FUEL_LABELS, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, driveFuel, showFees, vsMarket } from "./components/ui";
 
+// Dealer colour names arrive in any case ("GRAY", "isle of man green"): title case them, small joining words lower.
+const colourName = (s) => s.replace(/\*+$/, "").toLowerCase().replace(/(^|[\s/-])([a-z]+)/g, (m, sep, w, i) => sep + (i && /^(of|and|the|de|on|with|in)$/.test(w) ? w : w[0].toUpperCase() + w.slice(1)));
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
 const PRICE_STEPS = [5000, 10000, 15000, 20000, 25000, 30000, 40000, 50000, 75000];
@@ -707,8 +709,8 @@ export default function CarIntelDashboard() {
                 {rated && <><dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd></>}
                 <dt>Mileage</dt><dd className="num">{fmtN(deal.mileage)} mi</dd>
                 <dt>Location</dt><dd>{[deal.location_city, deal.location_state].filter(Boolean).join(", ") || "—"}</dd>
-                {color && <><dt>Colour</dt><dd>{deal.color_family && <i className="sw" style={{ "--sw": `var(--c-${deal.color_family})` }} />}{cap(color.toLowerCase())}</dd></>}
-                {(deal.interior_color || deal.base_int_color) && <><dt>Interior</dt><dd>{cap((deal.interior_color || deal.base_int_color).toLowerCase())}</dd></>}
+                {color && <><dt>Colour</dt><dd>{deal.color_family && <i className="sw" style={{ "--sw": `var(--c-${deal.color_family})` }} />}{colourName(color)}</dd></>}
+                {(deal.interior_color || deal.base_int_color) && <><dt>Interior</dt><dd>{colourName(deal.interior_color || deal.base_int_color)}</dd></>}
                 <dt>{atDealer != null ? "On the market" : "On sale for"}</dt>
                 <dd className={`num ${onSale >= STALE_DAYS ? "caution" : ""}`}>{fmtN(onSale)} days</dd>
                 {atDealer != null && <><dt>At this dealer</dt><dd className="num">{fmtN(atDealer)} days</dd></>}
