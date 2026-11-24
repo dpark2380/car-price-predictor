@@ -178,8 +178,15 @@ class ListingRepository:
             .filter(CarListing.is_active == True, CarListing.last_seen < cutoff)  # noqa: E712
             .update({"is_active": 0}, synchronize_session=False)
         )
+        # A relisted car (often after a price change) gets a new listing id; keep only its newest row active.
+        superseded = self.session.execute(text("""
+            UPDATE car_listings SET is_active = 0
+            WHERE is_active = 1 AND vin IS NOT NULL AND vin != '' AND EXISTS (
+                SELECT 1 FROM car_listings n WHERE n.vin = car_listings.vin AND n.is_active = 1
+                AND (n.last_seen > car_listings.last_seen OR (n.last_seen = car_listings.last_seen AND n.id > car_listings.id)))
+        """)).rowcount
         self.session.commit()
-        return int(updated)
+        return int(updated) + int(superseded)
 
     def get_all_listings_df(self, days_back: int = 90) -> pd.DataFrame:
         """Return all listings (including inactive) from the last N days."""

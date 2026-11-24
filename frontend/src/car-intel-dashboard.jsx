@@ -633,7 +633,8 @@ export default function CarIntelDashboard() {
 
   // ── ONE LISTING ─────────────────────────────────────────────────────────────
   if (view === "listing") {
-    const deal = deals.find((d) => d.listing_id === listingId) || preview.find((d) => d.listing_id === listingId);
+    // An older link for a relisted car falls back to its current listing (ids start with the VIN).
+    const deal = deals.find((d) => d.listing_id === listingId) || preview.find((d) => d.listing_id === listingId) || deals.find((d) => d.vin && d.vin === listingId.split("-")[0]);
     const goBack = (e) => {
       e.preventDefault();
       // Came from inside the site: Back keeps the previous page's filters.
