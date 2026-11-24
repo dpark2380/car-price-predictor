@@ -260,3 +260,9 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .why-list { list-style: none; padding: 0; margin: 0; }
 .why-list li { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 10px 0; border-top: 1px solid var(--rule); font-size: 14px; }
 .why-list li > :first-child { flex: 1 1 140px; min-width: 0; font-weight: 500; }
+
+/* Four header items fit a 390px phone on one line */
+.brand { white-space: nowrap; }
+@media (max-width: 420px) { .site-header .wrap { gap: 10px; } .nav { gap: 12px; } }
+/* Below 360px the logo stands alone; the name stays for screen readers */
+@media (max-width: 359px) { .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } }

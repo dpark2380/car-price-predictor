@@ -17,7 +17,8 @@ from flask_cors import CORS
 from loguru import logger
 from werkzeug.exceptions import HTTPException
 
-from db.models import CarListing, VinHistory, VinOptions, init_db, get_session
+import market
+from db.models import CarListing, Prediction, VinHistory, VinOptions, VinPriceHistory, init_db, get_session
 from db.repository import ListingRepository, PredictionRepository, PopularityRepository
 from scraper import vehicle_specs
 from scraper.api_usage import month_total
@@ -70,18 +71,18 @@ def db_cached(*params, maxsize=8):
     Serve a GET endpoint's response from memory until the pipeline next writes
     the database. Only the named query params form the key, so junk params
     (Cloudflare cache-busting) can't force recomputation, and maxsize bounds
-    memory however many distinct values arrive.
+    memory however many distinct values arrive. URL parts (<make>) join the key.
     """
     def deco(view):
         @functools.lru_cache(maxsize=maxsize)
         def compute(version, key):
-            r = view()
+            r = view(**dict(key[0]))
             r = r if isinstance(r, app.response_class) else app.make_response(r)
             return r.get_data(), r.status_code, r.mimetype
 
         @functools.wraps(view)
-        def wrapper():
-            key = tuple(request.args.get(p, "") for p in params)
+        def wrapper(**url_parts):
+            key = (tuple(url_parts.items()), tuple(request.args.get(p, "") for p in params))
             body, status, mimetype = compute(_db_version(), key)
             return app.response_class(body, status=status, mimetype=mimetype)
         return wrapper
@@ -367,6 +368,96 @@ def history():
     return _on_demand(VinHistory, "rows", lambda vin: mc_get(f"history/car/{vin}", {"sort_order": "desc"}),
                       _history_shape)
 
+
+
+# ── Market pages: aggregates over the latest active row per VIN, recomputed once per DB change ──
+
+@functools.lru_cache(maxsize=1)
+def _market_cars(version):
+    session = get_db()
+    try:
+        return market.load_cars(session)
+    finally:
+        session.close()
+
+
+def _found(page):
+    if page is None:
+        abort(404, "no such make or model")
+    return jsonify(page)
+
+
+@app.route("/api/market/makes")
+@db_cached()
+def market_makes():
+    return jsonify(market.makes(_market_cars(_db_version())))
+
+
+@app.route("/api/market/make/<make>")
+@db_cached(maxsize=64)
+def market_make(make):
+    return _found(market.make_page(_market_cars(_db_version()), make[:60]))
+
+
+@app.route("/api/market/model/<make>/<path:model>")
+@db_cached(maxsize=128)
+def market_model(make, model):
+    return _found(market.model_page(_market_cars(_db_version()), make[:60], model[:80]))
+
+
+@app.route("/api/model-card")
+@db_cached()
+def model_card():
+    """The card ml.pipeline.train writes beside the model, plus live counts from the database."""
+    from ml.pipeline import MODEL_PATH
+    try:
+        with open(os.path.join(os.path.dirname(MODEL_PATH), "model_card.json")) as f:
+            card = json.load(f)
+    except (OSError, ValueError):
+        abort(404, "no model card yet")
+    return jsonify({"card": card, "live": market.card_live(_market_cars(_db_version()))})
+
+
+@app.route("/api/car/<vin>")
+@db_cached(maxsize=256)
+def car(vin):
+    """One active listing for the car page: summary, rating, price history (ours plus any stored MarketCheck
+    history, see /api/history) and the asking prices of the same make, model and year."""
+    vin = vin.strip().upper()
+    if not _VIN.fullmatch(vin):
+        abort(400, "vin must be 17 letters and digits")
+    session = get_db()
+    try:
+        c = session.query(CarListing).filter_by(vin=vin, is_active=1).order_by(CarListing.last_seen.desc(), CarListing.id.desc()).first()
+        if c is None:
+            abort(404, "no such listing")
+        p = session.query(Prediction).filter_by(listing_id=c.listing_id).first() or Prediction()
+        stats = ListingRepository(session).get_market_stats().get((c.make, c.model, c.year))
+        own = [{"date": str(h.date)[:10], "price": h.price, "miles": h.miles, "seller": h.seller, "source": h.source}
+               for h in session.query(VinPriceHistory).filter_by(vin=vin).order_by(VinPriceHistory.date, VinPriceHistory.id)]
+        vh = session.get(VinHistory, vin)
+        stored = json.loads(vh.rows).get("points", []) if vh is not None and vh.rows is not None else []
+        rated = p.deal_score is not None
+        return jsonify({
+            "vin": vin, "listing_id": c.listing_id, "url": c.url, "photo_url": ss(c.photo_url),
+            "year": c.year, "make": c.make, "model": c.model, "trim": ss(c.trim),
+            "price": sf(c.price), "mileage": si(c.mileage), "dealer_name": ss(c.dealer_name),
+            "location_city": c.location_city, "location_state": c.location_state,
+            "days_on_market": si(c.days_listed), "days_in_listing": si(c.dom_active),
+            "first_listed": str(c.first_seen_at_mc_date)[:10] if c.first_seen_at_mc_date else None,
+            "first_seen": str(c.first_seen)[:10] if c.first_seen else None,
+            "deal_score": sf(p.deal_score), "deal_label": p.deal_label, "rating_basis": p.rating_basis,
+            "comparables": si(p.comparables), "typical_error_pct": sf(p.typical_error_pct),
+            # as /api/deals: the model's estimate when it rated the car, the US median for a national rating, else none
+            "predicted_price": stats["median"] if p.rating_basis == "national" and stats else sf(p.predicted_price) if rated and p.rating_basis != "national" else None,
+            "model_number": sf(p.predicted_price),   # the raw estimate, even when unrated: show it as unverified
+            "market": stats,
+            "history": market.merge_history(own, stored),
+            "has_full_history": vh is not None and vh.rows is not None,
+            "cohort": market.cohort(_market_cars(_db_version()), c.make, c.model, c.year),
+        })
+    finally:
+        session.close()
 
 @app.route("/api/options")
 def options():

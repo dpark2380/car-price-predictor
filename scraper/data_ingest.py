@@ -8,6 +8,7 @@ import random
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -159,6 +160,16 @@ def _num(v, cast):
         return None
 
 
+def _dt(v):
+    """Naive UTC datetime from the feed's epoch seconds (ref_price_dt) or ISO text (first_seen_at_mc_date); None if neither."""
+    try:
+        if isinstance(v, str):
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+        return datetime.fromtimestamp(float(v), timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
 def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
     try:
         build  = raw.get("build") or {}
@@ -232,6 +243,11 @@ def map_listing(raw: dict, source: str = "marketcheck") -> dict | None:
             "ref_price":      _num(raw.get("ref_price"), float),
             "price_change_percent": _num(raw.get("price_change_percent"), float),
             "dom_active":     _num(raw.get("dom_active"), int),
+            "ref_price_dt":   _dt(raw.get("ref_price_dt")),
+            "ref_miles":      _num(raw.get("ref_miles"), int),
+            "ref_miles_dt":   _dt(raw.get("ref_miles_dt")),
+            "first_seen_at_mc_date":     _dt(raw.get("first_seen_at_mc_date")),
+            "first_seen_at_source_date": _dt(raw.get("first_seen_at_source_date")),
             "location_city":  dealer.get("city"),
             "location_state": dealer.get("state"),
             "location_zip":   dealer.get("zip"),

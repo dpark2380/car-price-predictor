@@ -116,3 +116,49 @@ test("a shared price-check link shows its car and progress while data loads", as
   await expect(page.getByRole("button", { name: /^Model/ })).toHaveText("Accord", { timeout: 1000 });
   await expect(page.locator(".pc-result .value")).toHaveText("$21,300");
 });
+
+test("the Market brand index links to a brand and a model, and the nav marks Market", async ({ page }) => {
+  await page.goto("/market");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Brands");
+  await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Market" })).toHaveAttribute("aria-current", "page");
+  await page.getByRole("link", { name: "Toyota" }).click();
+  await expect(page).toHaveURL(/\/market\/Toyota$/);
+  await page.getByRole("link", { name: "Camry" }).click();
+  await expect(page).toHaveURL(/\/market\/Toyota\/Camry$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Toyota Camry");
+  expect(await noSideScroll(page)).toBe(true);
+  await page.goBack();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Toyota");
+});
+
+test("a model page loads on direct visit and a chart's figures open as a table", async ({ page }) => {
+  await page.goto("/market/Toyota/Camry");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Toyota Camry");
+  await expect(page.getByRole("img", { name: /^Histogram of Camry/ })).toBeVisible();
+  const first = page.locator("details.tbl summary").first();
+  await first.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("details.tbl[open] table").first()).toBeVisible();
+});
+
+test("the car page shows its price points, and the load-full-history control reports an unavailable lookup", async ({ page }) => {
+  await page.route("http://localhost:5001/api/history**", (r) => r.fulfill({ json: { available: false } }));
+  await page.goto("/car/4T1B11HK5KU123456");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("2019 Toyota Camry SE");
+  await expect(page.getByRole("img", { name: /^Step chart of asking price/ })).toBeVisible();
+  await expect(page.locator("tbody tr")).toHaveCount(2);
+  await page.getByRole("button", { name: "Load full history" }).click();
+  await expect(page.getByRole("alert")).toContainText("Full history isn't available today");
+  expect(await noSideScroll(page)).toBe(true);
+});
+
+test("the method page reads the model card, and a listing links to the Market pages", async ({ page }) => {
+  await page.goto("/market/method");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("How the estimate works");
+  await expect(page.getByText("Grades across 100 cars")).toBeVisible();
+  await page.goto("/listings/b2");
+  await expect(page.getByRole("link", { name: "Price history" })).toHaveAttribute("href", "/car/4T1B11HK5KU123456");
+  await expect(page.getByRole("link", { name: "All Toyota Camrys" })).toHaveAttribute("href", "/market/Toyota/Camry");
+  await page.getByRole("link", { name: "How accurate is this?" }).click();
+  await expect(page).toHaveURL(/\/market\/method$/);
+});

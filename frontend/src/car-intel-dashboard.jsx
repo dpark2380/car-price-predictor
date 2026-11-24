@@ -2,6 +2,9 @@ import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { dealTier } from "./utils/scoreColor.js";
 import { Select } from "./components/Select";
+import Market from "./market/Market";
+import { marketPath as marketUrl } from "./market/api";
+import { plural } from "./market/format";
 import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
@@ -56,8 +59,9 @@ const fmtUpdated = (iso) =>
 // Each view has a path and its inputs live in the query string, so Back works
 // and a filtered search or an estimate can be bookmarked or shared. Cloudflare
 // Pages serves index.html for any path (the build has no 404.html). A single
-// listing lives at /listings/<listing_id>.
-const PATHS = { home: "/", results: "/listings", estimator: "/price-check", listing: "/listings/" };
+// listing lives at /listings/<listing_id>. The Market area is /market, /market/<make>,
+// /market/<make>/<model>, /market/method and /car/<vin>; its own router reads the path.
+const PATHS = { home: "/", results: "/listings", estimator: "/price-check", listing: "/listings/", market: "/market" };
 const listingPath = (id) => `/listings/${encodeURIComponent(id)}`;
 
 function fromUrl() {
@@ -65,6 +69,9 @@ function fromUrl() {
   const path = window.location.pathname;
   if (path.startsWith("/listings/") && path.length > "/listings/".length) {
     return { ...fromUrlParams(new URLSearchParams(), "listing"), view: "listing", listingId: decodeURIComponent(path.slice("/listings/".length)) };
+  }
+  if (path === "/market" || path.startsWith("/market/") || path.startsWith("/car/")) {
+    return { ...fromUrlParams(new URLSearchParams(), "market"), marketPath: path };
   }
   return fromUrlParams(q, Object.keys(PATHS).find((v) => PATHS[v] === path) || "home");
 }
@@ -77,6 +84,7 @@ function fromUrlParams(q, view) {
   return {
     view,
     listingId: "",
+    marketPath: "",
     make: get("make"), model: get("model"), trim: get("trim"),
     body: get("body"), size: get("size"),
     priceFrom: get("price_from"), priceTo: get("price_to"),
@@ -104,15 +112,16 @@ const PAGE_TITLES = {
   results: "Used cars for sale, graded on price | Car Intel",
   estimator: "What is my car worth? Used car price check | Car Intel",
   listing: "Used car listing | Car Intel",
+  market: "Used car market | Car Intel",
 };
 
 export default function CarIntelDashboard() {
   const initial = useMemo(fromUrl, []);
   const [view, setView] = useState(initial.view); // "home" | "results" | "estimator" | "listing"
   const [listingId, setListingId] = useState(initial.listingId);
+  const [marketPath, setMarketPath] = useState(initial.marketPath);
   const [specs, setSpecs] = useState([]);
   const [photos, setPhotos] = useState([]);
-  const [history, setHistory] = useState(null); // price steps for the open listing; null until the API has them
   const [options, setOptions] = useState(null);
 
   const isRes = initial.view === "results";
@@ -197,10 +206,10 @@ export default function CarIntelDashboard() {
     return () => { live = false; };
   }, [view, listingId]);
 
-  // Price history and factory options come from paid lookups the API makes once per car, and only when it can: nothing shows until then.
+  // Factory options come from a paid lookup the API makes once per car, and only when it can: nothing shows until then.
+  // Price history is no longer fetched here: the car page loads it on request.
   const openVin = view === "listing" ? (deals.find((d) => d.listing_id === listingId) || preview.find((d) => d.listing_id === listingId))?.vin : null;
   useEffect(() => {
-    setHistory(null);
     setOptions(null);
     if (!openVin) return;
     let live = true;
@@ -209,7 +218,7 @@ export default function CarIntelDashboard() {
         .then((r) => (r.ok ? r.json() : null))
         .then((v) => live && v?.available && set(v))
         .catch(() => {});
-    load("history", setHistory).then(() => load("options", setOptions)); // one at a time: the API allows one new lookup a day
+    load("options", setOptions);
     return () => { live = false; };
   }, [openVin]);
 
@@ -301,6 +310,8 @@ export default function CarIntelDashboard() {
         ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
         : view === "listing"
         ? listingPath(listingId)
+        : view === "market"
+        ? marketPath
         : toUrl(view, {});
     if (url === window.location.pathname + window.location.search) return;
     if (url.split("?")[0] !== window.location.pathname) {
@@ -309,29 +320,45 @@ export default function CarIntelDashboard() {
     } else {
       window.history.replaceState(null, "", url);
     }
-  }, [view, listingId, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, photoOnly, reducedOnly, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
+  }, [view, listingId, marketPath, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, photoOnly, reducedOnly, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
 
   useEffect(() => {
-    document.title = PAGE_TITLES[view];
+    if (view !== "market") document.title = PAGE_TITLES[view]; // the Market pages name themselves
   }, [view]);
 
-  // Back/Forward: restore the view and inputs the URL describes.
+  // Show the view and inputs the address bar describes (Back/Forward, and links that stay in the site).
+  const applyUrl = () => {
+    const u = fromUrl();
+    setView(u.view);
+    setListingId(u.listingId);
+    setMarketPath(u.marketPath);
+    if (u.view === "results") {
+      setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
+      setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
+      setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setReducedOnly(u.reduced); setSortKey(u.sortKey); setSortDir(u.sortDir);
+    } else if (u.view === "estimator") {
+      setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
+    }
+  };
   useEffect(() => {
-    const onPop = () => {
-      const u = fromUrl();
-      setView(u.view);
-      setListingId(u.listingId);
-      if (u.view === "results") {
-        setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
-        setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
-        setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setReducedOnly(u.reduced); setSortKey(u.sortKey); setSortDir(u.sortDir);
-      } else if (u.view === "estimator") {
-        setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
-      }
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    window.addEventListener("popstate", applyUrl);
+    return () => window.removeEventListener("popstate", applyUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const goPath = (path) => {
+    window.history.pushState(null, "", path);
+    window.scrollTo(0, 0);
+    applyUrl();
+  };
+  // An <a> that goes to a path inside the site without a reload.
+  const pathLink = (to) => ({
+    href: to,
+    onClick: (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      goPath(to);
+    },
+  });
 
   const runEstimate = async () => {
     if (!estMake || !estModel || !estYear || !estMileage) {
@@ -410,11 +437,12 @@ export default function CarIntelDashboard() {
         <div className={wrap}>
           <NavLink to="home" className="brand">
             <BrandMark />
-            Car Intel
+            <span className="brand-name">Car Intel</span>
           </NavLink>
           <nav className="nav" aria-label="Main">
             <NavLink to="results">Listings</NavLink>
             <NavLink to="estimator">Price check</NavLink>
+            <NavLink to="market" onNavigate={() => goPath("/market")}>Market</NavLink>
           </nav>
           <ThemeToggle />
         </div>
@@ -425,13 +453,26 @@ export default function CarIntelDashboard() {
   const footer = (
     <footer className="site-footer">
       <div className={wrap}>
-        <span>Grades compare each asking price with a market-value model trained on recent listings in the western US.</span>
+        <span>Grades compare each asking price with a <a {...pathLink("/market/method")}>market-value model</a> trained on recent listings in the western US.</span>
         <span>{stats.last_updated ? `Listings updated ${fmtUpdated(stats.last_updated)}` : ""}</span>
       </div>
     </footer>
   );
 
   const total = loading.deals ? stats.graded_listings : deals.length;
+
+  // ── MARKET ──────────────────────────────────────────────────────────────────
+  if (view === "market") {
+    return (
+      <>
+        {header}
+        <main className="wrap" id="main" tabIndex={-1}>
+          <Market path={marketPath} navigate={goPath} />
+        </main>
+        {footer}
+      </>
+    );
+  }
 
   // ── HOME ────────────────────────────────────────────────────────────────────
   if (view === "home") {
@@ -606,6 +647,11 @@ export default function CarIntelDashboard() {
                   </a>
                 </div>
               )}
+              <div className="linkrow">
+                {deal.vin && <a className="btn-quiet" {...pathLink(`/car/${encodeURIComponent(deal.vin)}`)}>Price history</a>}
+                <a className="btn-quiet" {...pathLink(marketUrl(deal.make, deal.model))}>All {deal.make} {plural(deal.model)}</a>
+                <a className="btn-quiet" {...pathLink("/market/method")}>How accurate is this?</a>
+              </div>
             </section>
           </div>
 
@@ -656,32 +702,6 @@ export default function CarIntelDashboard() {
               )}
             </div>
           </section>
-
-          {history?.points?.length > 1 && (() => {
-            const pts = history.points;
-            const first = pts[0];
-            const diff = first.price - deal.price;
-            const month = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
-            return (
-              <section className="section" aria-labelledby="history-title">
-                <div className="section-head"><h2 id="history-title">Price history</h2></div>
-                <div className="panel why">
-                  <p>First seen at {fmt$(first.price)} in {month(first.date)}; {diff > 0 ? `${fmt$(diff)} lower now` : diff < 0 ? `${fmt$(-diff)} higher now` : "the same price now"}.</p>
-                  <ul className="why-list">
-                    {pts.map((p, i) => (
-                      <li key={`${p.date}-${i}`}>
-                        <span className="num">{p.date}</span>
-                        <span className="num">{fmt$(p.price)}</span>
-                        <span className="num">{i === 0 ? "" : `${p.price < pts[i - 1].price ? "−" : "+"}${fmt$(Math.abs(p.price - pts[i - 1].price))}`}</span>
-                        <span className="num">{p.miles != null ? `${fmtN(p.miles)} mi` : ""}</span>
-                        <span>{p.seller}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </section>
-            );
-          })()}
 
           {options?.options?.length > 0 && (
             <section className="section" aria-labelledby="options-title">

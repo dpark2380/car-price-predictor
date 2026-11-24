@@ -1,4 +1,5 @@
 import os
+import time
 import joblib
 import numpy as np
 import pandas as pd
@@ -377,6 +378,81 @@ def _vin_split(df: pd.DataFrame, seed: int = 42):
     return rest[tr], rest[val], test
 
 
+# Inputs by the five groups the Market "How it works" page shows (permutation importance below).
+FEATURE_GROUPS = {
+    "Comparables":     ["cohort_median_price", "cohort_count", "comp_price"],
+    "Age and mileage": ["year", "vehicle_age", "age_sq", "log_age", "mileage", "log_mileage", "miles_per_year"],
+    "The car":         ["make", "model", "trim", "trim_rank", "body_type", "exterior_color"],
+    "Segment flags":   ["is_luxury", "is_truck", "is_sports", "lux_age", "lux_mpy"],
+    "Location":        ["state", "zip3"],
+}
+CARD_COMPARABLES = [("0", 0, 0), ("1-2", 1, 2), ("3-9", 3, 9), ("10-29", 10, 29), ("30+", 30, np.inf)]
+CARD_BOOTSTRAPS = 2000
+IMPORTANCE_ROWS = 1500    # validation rows permuted: ~5 groups x 3 repeats of predict() on this many
+IMPORTANCE_REPEATS = 3
+
+
+def _permutation_importance(pipe, X_val: pd.DataFrame, y_val: pd.Series, log_cal: float, seed: int = 42) -> dict:
+    """Mean $ added to validation MAE when one input group's columns are shuffled together, per group,
+    and each as a share of the largest. Shuffling a group together keeps its correlated columns consistent."""
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(X_val), min(IMPORTANCE_ROWS, len(X_val)), replace=False)
+    X, y = X_val.iloc[idx].reset_index(drop=True), y_val.to_numpy()[idx]
+    mae = lambda Xs: float(np.mean(np.abs(np.expm1(pipe.predict(Xs) - log_cal) - y)))
+    base = mae(X)
+    added = {}
+    for group, cols in FEATURE_GROUPS.items():
+        deltas = []
+        for _ in range(IMPORTANCE_REPEATS):
+            Xp = X.copy()
+            perm = rng.permutation(len(X))
+            for c in cols:   # column by column: a mixed-dtype block would turn the numeric ones into objects
+                Xp[c] = X[c].to_numpy()[perm]
+            deltas.append(mae(Xp) - base)
+        added[group] = float(np.mean(deltas))
+    top = max(added.values()) or 1.0
+    return {"base_val_mae": round(base), "rows": len(X), "repeats": IMPORTANCE_REPEATS,
+            "groups": [{"group": g, "mae_added": round(v), "relative": round(max(v, 0) / top, 3)} for g, v in added.items()]}
+
+
+def _model_card(version, best_name, metrics, y_test, pred_test, cc_test, segment_errors, seg_y, seg_cc, rows, importance) -> dict:
+    """What the Market "How it works" page shows (api.py /api/model-card): test-split accuracy of the
+    selected model, with bootstrap 95% intervals on the median error, plus the deal score's yardstick."""
+    rng = np.random.default_rng(42)
+
+    def summ(m: np.ndarray, boot: bool = True) -> dict:
+        p, y = pred_test[m], y_test[m]
+        e = (p - y) / y * 100
+        a = np.abs(e)
+        d = {"n": int(len(y)), "median_ape": round(float(np.median(a)), 2) if len(y) else None,
+             "signed_median_pct": round(float(np.median(e)), 2) if len(y) else None,
+             "mae": round(float(np.mean(np.abs(p - y)))) if len(y) else None,
+             "within5": round(float((a <= 5).mean() * 100), 1) if len(y) else None,
+             "within10": round(float((a <= 10).mean() * 100), 1) if len(y) else None,
+             "within20": round(float((a <= 20).mean() * 100), 1) if len(y) else None}
+        if boot and len(y) > 1:
+            i = rng.integers(0, len(a), (CARD_BOOTSTRAPS, len(a)))
+            d["ci95"] = [round(float(v), 2) for v in np.percentile(np.median(a[i], axis=1), [2.5, 97.5])]
+        return d
+
+    overall = summ(np.ones(len(y_test), bool))
+    by_price = [{"lo": lo, "hi": None if hi == float("inf") else hi, **summ((y_test >= lo) & (y_test < hi))} for lo, hi in PRICE_SEGMENTS]
+    by_comp = [{"band": label, **summ((cc_test >= lo) & (cc_test <= hi))} for label, lo, hi in CARD_COMPARABLES]
+    grid = []
+    for lo, hi, err, cells in segment_errors:
+        in_band = (seg_y >= lo) & (seg_y < hi)
+        grid.append({"lo": lo, "hi": None if hi == float("inf") else hi, "error_pct": round(err, 2), "n": int(in_band.sum()),
+                     "cells": [{"comparables_lo": clo, "comparables_hi": None if chi == float("inf") else chi, "error_pct": round(c, 2),
+                                "n": int((in_band & (seg_cc >= clo) & (seg_cc < chi)).sum())} for clo, chi, c in cells]})
+    return {
+        "date": datetime.utcnow().strftime("%Y-%m-%d"), "version": version, "selected_model": best_name, "rows": rows,
+        "candidates": {k: {"test_mae": round(v["mae"]), "val_mae": round(v["val_mae"])} for k, v in metrics.items()},
+        "test": {**overall, "bias_pct": overall["signed_median_pct"], "by_price": by_price, "by_comparables": by_comp},
+        "segment_errors": grid,
+        "importance": importance,
+    }
+
+
 def train(df: pd.DataFrame, model_path: str | None = MODEL_PATH) -> dict | None:
     """df: rows from ListingRepository.get_training_listings_df. model_path=None
     trains and evaluates without saving (scripts/holdout_audit.py).
@@ -725,6 +801,15 @@ def train(df: pd.DataFrame, model_path: str | None = MODEL_PATH) -> dict | None:
     if model_path:
         os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
         joblib.dump(payload, model_path)
+        t0 = time.time()
+        card = _model_card(
+            version, best_name, metrics, y_test.to_numpy(), test_preds[best_name], X_test["cohort_count"].to_numpy(), segment_errors,
+            np.concatenate([y_val.to_numpy(), y_train.to_numpy()]), np.concatenate([X_val["cohort_count"].to_numpy(), oof_count]),
+            {"pool": int(len(df)), "train": int(len(X_train)), "val": int(len(X_val)), "test": int(len(X_test))},
+            _permutation_importance(pipe, X_val, y_val, log_calibration))
+        with open(os.path.join(os.path.dirname(model_path) or ".", "model_card.json"), "w") as f:
+            _json.dump(card, f, indent=1)
+        logger.info(f"Model card written ({time.time() - t0:.1f} s)")
 
     logger.info(f"Selected model: {best_name}")
 

@@ -75,7 +75,8 @@ Storage (`db/models.py`, `db/repository.py`) is a SQLite database accessed throu
 | Table | Holds |
 |---|---|
 | `car_listings` | One row per listing, upserted by `listing_id`; stale listings are marked inactive, not deleted |
-| `price_history` | A row each time a listing's price is first seen or changes (seeded 2026-11-08 with the then-current prices) |
+| `price_history` | One row per listing id, when first seen or its price changes; a price cut arrives as a new listing, so nothing reads it any more |
+| `vin_price_history` | One point per change of a car's price or miles, keyed by VIN, from the nightly scrape, the feed's earlier price (`ref`) and `scripts/backfill_price_history.py`; the Market car page's chart |
 | `predictions` | Every scoring run's predicted price, deal score and model version |
 | `popularity_snapshots` | Daily counts and prices per year/make/model cohort |
 | `vin_specs`, `model_specs` | Cached NHTSA data, per VIN pattern and per year/make/model |

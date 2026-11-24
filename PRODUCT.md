@@ -8,15 +8,15 @@ web
 
 ## Users
 
-- Primary: people shopping for a used car in the western US who want to know whether a listing's asking price is fair before contacting a dealer. Evidence: home headline "Search N used cars, each graded on price", price-check page title "What is my car worth? Used car price check", footer "trained on recent listings in the western US".
-- Secondary: people who want a ballpark value for a car they own or are considering (the Price check view: make, model, year, mileage, optional link sharing via URL).
-- Also: employers and reviewers looking at the owner's (Daniel Park's) work. Method and evidence (how grades are computed, held-out metrics, retracted earlier figures) stay visible rather than hidden.
+- Primary: the owner (Daniel Park), who uses the site himself, and recruiters or hiring engineers evaluating his work. A reviewer typically spends 2 to 5 minutes, is technical, and is checking whether the data and the modelling are real and understood. Owner's words (2026-11-23): the site is "purely for me and potential recruiters to see, not really for real users", and is not monetised.
+- What that reader needs: real numbers with their source, the method and its limits stated plainly, and failure cases shown (unrated cars, thin data), not a sales pitch.
+- Secondary: anyone who lands on the public site while shopping for a used car in the western US. The shopper-facing views (search, listings, listing page, Price check) stay usable and honest for them, but scale, acquisition and conversion are not goals.
 - Not a dealer tool: no inventory management or dealer-facing screens.
-- Accounts, saved searches and price alerts are not built now but are possible later; design choices should not rule them out.
+- Accounts, saved searches and price alerts are not built and are not planned for this audience; design choices should not rule them out.
 
 ## Product Purpose
 
-Car Intel pulls active used-car listings from MarketCheck daily, estimates what each car should list for with a trained price model, and grades every listing on how far its asking price sits from that estimate. It also gives an on-demand estimate and range for any make, model, year and mileage. Success: a shopper spots a genuinely below-market car quickly and trusts the grade, meaning a "Great deal" is not just model noise.
+Car Intel pulls active used-car listings from MarketCheck daily, estimates what each car should list for with a trained price model, and grades every listing on how far its asking price sits from that estimate. It also gives an on-demand estimate and range for any make, model, year and mileage. Success: a reviewer can see in a few minutes what data the site holds, how an estimate and grade are produced, and how accurate they are, and can check any figure against its source; a "Great deal" is not just model noise.
 
 ## Positioning
 
@@ -27,7 +27,8 @@ Car Intel pulls active used-car listings from MarketCheck daily, estimates what 
 ## Operating Context
 
 - Four views, each with its own URL: home (search, quick-filter chips, "Priced furthest below market", shop by body type, "How prices are graded"), listings (filters, sort field plus asc/desc, "Only cars with a photo"), a listing page (photo gallery, price grade, market value, facts, NHTSA spec sheet, similar cars, link to the dealer's site), and price check (estimate plus a range where about half of similar cars list).
-- Data refreshes once a day (launchd on a Mac mini at 10:00 local); the footer shows "Listings updated ...". Roughly 22,000 active listings (as of 2026-11-08) around 15 rotating western-US zip codes; cars, pickups and SUVs.
+- Planned, design under review and not built (2026-11-23): a "Market & model" area with a car view (one VIN's price path), a model view, a brand view and a "How the estimate works" model card. Mockup reviewed as a published Artifact before any build.
+- Data refreshes once a day (launchd on a Mac mini at 10:00 local); the footer shows "Listings updated ...". About 29,500 active listing rows, about 23,100 distinct cars (as of 2026-11-23) around 15 rotating western-US zip codes; cars, pickups and SUVs.
 - Hosting: React (Create React App) on Cloudflare Pages at cars.danielpark.fyi; Flask API through a Cloudflare Tunnel at cars-api.danielpark.fyi; SQLite on the Mac mini.
 - Tested on desktop Chrome and a phone viewport (Pixel 7) with Playwright (`frontend/e2e/app.spec.js`), including no horizontal scroll on phone.
 - Single owner-operator (Daniel Park); [ASSUMED] no support, sales or content team.
@@ -38,6 +39,8 @@ Car Intel pulls active used-car listings from MarketCheck daily, estimates what 
 - Grades on the site (`frontend/src/utils/scoreColor.js`): Great deal (90-100), Good deal (65-89), Fair price (35-64), High price (15-34), Overpriced (0-14). Anything within about one typical error of the estimate reads as fair. The API still returns "N Stars" labels; the site uses the plain words.
 - Terminology in use: "market value", "below market", "Price check", "Listings", "graded on price", "Similar <Make> <Model>s".
 - Known limits that the UI must not overstate: the target is the dealer's asking price, not a sale price; the model sees no condition or options data; it is a western-US model; error is about 8% median overall and much wider under $10k; few comparables triggers "treat this as a rough guide".
+- History on hand is short: listings were first collected on 2026-03-23, on 67 scrape days, with none between 2026-06-17 and 2026-08-27. A listing row holds its latest price only; a price change shows up as a new listing row for the same VIN (6,406 VINs have 2 or more distinct prices, 1,637 have 3 or more, 501 appear at 2 or more dealers) or as MarketCheck's previous price (`ref_price`, on about 11,000 active rows). Coverage grew a lot in October 2026, so month-to-month medians before then mostly reflect sample mix. Longer per-VIN history (back to 2024) exists only through MarketCheck's on-demand history call, about 30 spare calls a month.
+- The price model is now a router: XGBoost for cars it prices under $10k, and the mean of XGBoost, CatBoost and LightGBM above that (`PriceRouted` in `ml/pipeline.py`). Cars with no same make/model/year at other dealers are "Not rated", as are cars with 1-2 such comparables whose score lands in the top or bottom tier.
 - Data gaps: many listings have no photo (shown as a short "No photo available" band; home's top deals show only cars with a photo); spec sheets fill in over time from NHTSA (hp/torque only where a true value was found); listings whose dealer site is down are hidden.
 - Free-tier budgets bound the product today: MarketCheck about 450 of 500 calls a month, Auto.dev 30 photo calls a night, NHTSA 300 spec calls a night. There is no declared hard $0 limit: the site runs on free tiers now, and paid options are proposed to the owner and adopted only after the owner reviews them.
 - Security constraints: strict CSP in `frontend/public/_headers` (no inline scripts, fonts only from Google Fonts, images from any https host, API connect only to cars-api.danielpark.fyi). The API is read-only.
@@ -52,7 +55,7 @@ Car Intel pulls active used-car listings from MarketCheck daily, estimates what 
 
 ## Evidence on Hand
 
-- Model accuracy: `outputs/holdout_metrics.json` (9,605 unique cars, 2026-10-15; XGBoost median abs error 8.2%, 95% CI 7.6-8.7) and the README Results table.
+- Model accuracy: `outputs/holdout_metrics.json` (9,605 unique cars, 2026-10-15; XGBoost median abs error 8.2%, 95% CI 7.6-8.7) and the README Results table. That audit predates the current blend and the larger training set (23,775 cars on 2026-11-23); newer figures exist only in the training log (blend test MAE $2,743 on 4,755 held-out cars) until `scripts/holdout_audit.py` is re-run.
 - Run history: `outputs/run_history/` (scrape, training and validation logs since April 2026).
 - Serving latency: README table from `scripts/latency_bench.py`.
 - Research notes: `research/*.md` (deal detection validation, photos, specs, deployment, model research).
@@ -61,7 +64,7 @@ Car Intel pulls active used-car listings from MarketCheck daily, estimates what 
 ## Product Principles
 
 1. [ASSUMED] Say only what the data supports: a grade reflects the model's measured uncertainty, and caveats (asking price, western US, rough guide on rare cars) stay visible rather than buried.
-2. [ASSUMED] Plain words over scores and jargon: shoppers see "Good deal" and "$4,000 below market", not z-scores or star counts.
+2. [ASSUMED] Plain words first, method one step behind: listings say "Good deal" and "$4,000 below market"; the formula, inputs and error figures are one click away for the reader who wants to check them.
 3. [ASSUMED] Every view is linkable: filters, sort and price checks live in the URL so a result can be shared.
 4. [ASSUMED] One operator, owner-approved spend: features run unattended and fit today's free-tier budgets; anything paid is proposed and reviewed by the owner first.
 5. [ASSUMED] Never imply an endorsement or transaction: Car Intel grades listings and sends people to the dealer's own site.

@@ -30,6 +30,7 @@
   --pill-warning-bg: #fffbeb;
   --pill-warning-ink: #92400e;
   --shadow-card: 0 1px 2px rgb(20 20 15 / 0.04), 0 8px 24px -12px rgb(20 20 15 / 0.1);
+  --dot: #9a9a94;
 
   --font-sans: "Red Hat Text", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Red Hat Display", var(--font-sans);
@@ -64,6 +65,7 @@
     --pill-warning-bg: #2b2111;
     --pill-warning-ink: #fbbf24;
     --shadow-card: 0 0 0 1px #262624;
+    --dot: #6f6f6a;
   }
 }
 
@@ -88,6 +90,7 @@
   --pill-warning-bg: #2b2111;
   --pill-warning-ink: #fbbf24;
   --shadow-card: 0 0 0 1px #262624;
+    --dot: #6f6f6a;
 }
 
 body {

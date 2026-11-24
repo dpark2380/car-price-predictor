@@ -14,6 +14,7 @@ from loguru import logger
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from db.price_history import record_point
 from db.models import CarListing, MarketStats, Prediction, PopularitySnapshot, PriceHistory, MIN_PRICE
 
 
@@ -47,6 +48,8 @@ class ListingRepository:
                 .first()
             )
 
+            record_point(self.session, data, now)
+
             if existing:
                 # Confirm still active and stamp when we last saw it
                 existing.last_seen = now
@@ -69,6 +72,7 @@ class ListingRepository:
                     "transmission", "drivetrain", "fuel_type", "powertrain_type", "engine_size",
                     "cylinders", "doors", "seats", "city_mpg", "highway_mpg", "carfax_1_owner",
                     "ref_price", "price_change_percent", "dom_active", "msrp",
+                    "ref_price_dt", "ref_miles", "ref_miles_dt", "first_seen_at_mc_date", "first_seen_at_source_date",
                 }
                 for k in mutable_fields:
                     v = data.get(k)

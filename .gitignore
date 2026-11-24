@@ -12,6 +12,7 @@ __pycache__/
 *.db
 *.sqlite
 models/*.joblib
+models/model_card.json
 logs/
 onnx_export_test/
 

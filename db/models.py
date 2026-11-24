@@ -47,6 +47,13 @@ class CarListing(Base):
     ref_price      = Column(Float)     # price-cut history: display/validation only,
     price_change_percent = Column(Float)  # never price-model features (outcomes of pricing)
     dom_active     = Column(Integer)
+    # The feed's earlier price/odometer with their dates, and when MarketCheck / the listing site
+    # first saw the car (UTC): history points for the car page (db/price_history.py), display only.
+    ref_price_dt   = Column(DateTime)
+    ref_miles      = Column(Integer)
+    ref_miles_dt   = Column(DateTime)
+    first_seen_at_mc_date     = Column(DateTime)
+    first_seen_at_source_date = Column(DateTime)
     location_city  = Column(String)
     location_state = Column(String)
     location_zip   = Column(String)
@@ -61,15 +68,29 @@ class CarListing(Base):
         Index("ix_active", "is_active"),
     )
 
-# One row each time a listing's asking price is first seen or changes
-# (ListingRepository.upsert_listings). Rows before 2026-11-08 were seeded with
-# the price as of last_seen, so earlier cuts appear only via ref_price.
+# One row per listing id, written when it is first seen or its price changes
+# (ListingRepository.upsert_listings). A dealer's price cut arrives under a new
+# listing id, so no listing has ever held 2 rows; nothing but a test reads this.
+# The per-car history lives in VinPriceHistory.
 class PriceHistory(Base):
     __tablename__ = "price_history"
     id         = Column(Integer, primary_key=True, autoincrement=True)
     listing_id = Column(String, index=True, nullable=False)
     price      = Column(Float, nullable=False)
     seen_at    = Column(DateTime, default=datetime.utcnow)
+
+class VinPriceHistory(Base):
+    """One point per change of a car's asking price or odometer, keyed by VIN (db/price_history.py).
+    source: "scrape" (our nightly search), "ref" (the feed's earlier price) or "marketcheck" (reserved for stored full histories)."""
+    __tablename__ = "vin_price_history"
+    id     = Column(Integer, primary_key=True, autoincrement=True)
+    vin    = Column(String, nullable=False)
+    date   = Column(DateTime, nullable=False)
+    price  = Column(Float, nullable=False)
+    miles  = Column(Integer)
+    seller = Column(String)
+    source = Column(String, nullable=False)
+    __table_args__ = (Index("ix_vph_vin_date", "vin", "date"),)
 
 class Prediction(Base):
     __tablename__ = "predictions"
