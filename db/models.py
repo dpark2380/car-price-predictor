@@ -47,6 +47,18 @@ class CarListing(Base):
     ref_price      = Column(Float)     # price-cut history: display/validation only,
     price_change_percent = Column(Float)  # never price-model features (outcomes of pricing)
     dom_active     = Column(Integer)
+    # Listing extras (added 2026-11-24, filled from later scrapes; NULL = not in the feed)
+    fees           = Column(Float)     # dealer fees in dollars as listed (one number in the feed); NULL if absent or not a number
+    price_includes_fees = Column(Integer)  # 1/0 as reported
+    base_ext_color = Column(String)    # colour family from the feed (Gray, Black, ...)
+    base_int_color = Column(String)
+    interior_color = Column(String)
+    is_certified   = Column(Integer)   # 1/0; the feed only sends it for certified cars, so a scraped row holds 0 otherwise
+    stock_no       = Column(String)
+    dos_active     = Column(Integer)   # days at this dealer's site
+    dealer_website = Column(String)
+    dealer_msa_code = Column(String)
+    overall_length = Column(Float)     # inches
     # The feed's earlier price/odometer with their dates, and when MarketCheck / the listing site
     # first saw the car (UTC): history points for the car page (db/price_history.py), display only.
     ref_price_dt   = Column(DateTime)

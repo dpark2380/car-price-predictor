@@ -8,6 +8,8 @@ const MODEL_MIN = 40; // a model row needs this many cars to be worth a line
 const BRAND_MIN = 10;
 const SMALL_MIN = 50;
 
+const DEALER_KINDS = [["franchise", "Franchise", "great"], ["independent", "Independent", "good"], ["not_stated", "Not stated", "nr"]];
+
 const gapHead = { text: "Gap to estimate" };
 
 export function BrandsTable({ rows, current }) {
@@ -57,7 +59,7 @@ export function BrandView({ make: makeIn }) {
   if (error) return <ErrorBox error={error} onRetry={reload} notFound={`We have no listings for ${makeIn}.`} back={{ to: "/market", text: "See all brands" }} />;
   if (!d) return <Skeleton label="Loading the brand" />;
 
-  const { make, summary: s } = d;
+  const { make, summary: s, dealer_types: dealerTypes } = d;
   let models = d.models.filter((m) => m.n >= MODEL_MIN);
   const big = models.length;
   if (!models.length) models = d.models.slice(0, 10);
@@ -85,6 +87,19 @@ export function BrandView({ make: makeIn }) {
           ]}
         />
       </section>
+
+      {dealerTypes && dealerTypes.franchise + dealerTypes.independent > 0 && (
+        <Section id="br-dealers" title="Dealer type" src="own DB">
+          <div className="panel fig">
+            <div className="mix" role="img" aria-label={`Dealer type: ${DEALER_KINDS.map(([k, l]) => `${num(dealerTypes[k])} ${l.toLowerCase()}`).join(", ")}.`}>
+              {DEALER_KINDS.map(([k, , cls]) => (dealerTypes[k] ? <span key={k} className={cls} style={{ flex: dealerTypes[k] }} /> : null))}
+            </div>
+            <ul className="legend">
+              {DEALER_KINDS.map(([k, l, cls]) => <li key={k}><i className={cls} />{l} <b className="num">{num(dealerTypes[k])}</b></li>)}
+            </ul>
+          </div>
+        </Section>
+      )}
 
       <Section id="br-h1" title="Models" src="own DB">
         <div className="panel">

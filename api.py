@@ -7,6 +7,7 @@ import functools
 import json
 import math
 import os
+import random
 import re
 import threading
 from datetime import datetime, timezone
@@ -173,6 +174,16 @@ def _reduced(was, now):
     return {"was": was, "amount": round(was - now), "pct": round(pct, 1)} if 1 <= pct <= 40 else None
 
 
+def _extras(c):
+    """Listing columns filled from scrapes after 2026-11-24 (NULL on older rows); c is a row or a CarListing."""
+    g = (lambda k: getattr(c, k)) if isinstance(c, CarListing) else c.get
+    return {"fees": sf(g("fees")), "price_includes_fees": si(g("price_includes_fees")),
+            "base_int_color": ss(g("base_int_color")), "interior_color": ss(g("interior_color")),
+            "is_certified": si(g("is_certified")), "stock_no": ss(g("stock_no")), "dos_active": si(g("dos_active")),
+            "dealer_website": ss(g("dealer_website")), "dealer_msa_code": ss(g("dealer_msa_code")),
+            "overall_length": sf(g("overall_length"))}
+
+
 @functools.lru_cache(maxsize=1)
 def _deal_records(version):
     """Every graded, non-stale listing as API rows, best deal first. version: _db_version()."""
@@ -203,7 +214,6 @@ def _deal_records(version):
         df = df[fresh & reachable].sort_values("deal_score", ascending=False)
 
         # US-wide figures for cars rated or shown from them (one query; cached with the rest by _db_version)
-        market = market_stats
         return [{
             "listing_id":      row.get("listing_id"),
             "url":             row.get("url"),
@@ -220,7 +230,7 @@ def _deal_records(version):
             "deal_score":      sf(row.get("deal_score")),
             "deal_label":      row.get("deal_label"),
             "comparables":     si(row.get("comparables")),
-            "market":          None if pd.notna(row.get("deal_score")) and row.get("rating_basis") != "national" else market.get((row.get("make"), row.get("model"), si(row.get("year")))),
+            "market":          None if pd.notna(row.get("deal_score")) and row.get("rating_basis") != "national" else market_stats.get((row.get("make"), row.get("model"), si(row.get("year")))),
             "rating_basis":    ss(row.get("rating_basis")),
             "typical_error_pct":   sf(row.get("typical_error_pct")),
             "cohort_median_price": sf(row.get("cohort_median_price")),
@@ -232,6 +242,16 @@ def _deal_records(version):
             "dealer_name":     ss(row.get("dealer_name")),
             "dealer_phone":    ss(row.get("dealer_phone")),
             "dealer_street":   ss(row.get("dealer_street")),
+            "dealer_type":     ss(row.get("dealer_type")),
+            "drivetrain":      ss(row.get("drivetrain")),
+            "fuel_type":       ss(row.get("fuel_type")),
+            "fuel":            market.fuel_family(ss(row.get("fuel_type")), ss(row.get("powertrain_type"))),
+            "exterior_color":  ss(row.get("exterior_color")),
+            "base_ext_color":  ss(row.get("base_ext_color")),
+            "color_family":    market.color_family(ss(row.get("base_ext_color")), ss(row.get("exterior_color"))) if ss(row.get("base_ext_color")) or ss(row.get("exterior_color")) else None,
+            "city_mpg":        si(row.get("city_mpg")),
+            "highway_mpg":     si(row.get("highway_mpg")),
+            **_extras(row),
             # Last price cut (negative %) and the price before it; display only.
             "price_change_percent": sf(row.get("price_change_percent")),
             "ref_price":       sf(row.get("ref_price")),
@@ -245,37 +265,110 @@ def _deal_records(version):
         session.close()
 
 
-@app.route("/api/deals")
-@db_cached("limit", "min_score", "make", "model", "body", maxsize=4)
-def deals():
-    """
-    Returns "deal finder" rows, best first.
+_DEAL_PARAMS = ("limit", "offset", "min_score", "make", "model", "body", "drivetrain", "fuel", "color", "min_price", "max_price",
+                "min_miles", "max_miles", "min_year", "max_year", "has_photo", "reduced", "sort", "seed")
+_CHOICES = {"drivetrain": {"awd", "4wd", "fwd", "rwd"}, "fuel": {"gas", "hybrid", "electric", "diesel"},
+            "color": {"black", "white", "silver", "grey", "blue", "red", "green", "brown", "other"}}
+FEATURED_MIN_SCORE = market.TIER_MIN[2][0]   # "fair" or better
 
-    deal_score is 0–100 where 100 is best deal.
-    Query params:
-      - limit: max rows to return (default: all graded listings)
-      - min_score: minimum deal_score to include (default 0)
-      - make/model: substring filters
-      - body: body type filter (e.g. SUV, Sedan, Truck). Use "unknown" for NULLs.
-    """
-    limit     = _arg_int("limit", None, 1, 50_000)
+
+def _arg_choices(name):
+    """Comma-separated values from a whitelist, lower-cased; anything else -> 400. None when absent."""
+    raw = request.args.get(name, "").strip().lower()
+    vals = {v.strip() for v in raw.split(",") if v.strip()}
+    if vals - _CHOICES[name]:
+        abort(400, f"{name} must be one or more of {', '.join(sorted(_CHOICES[name]))}")
+    return vals or None
+
+
+def _arg_flag(name):
+    raw = request.args.get(name, "").strip().lower()
+    if raw not in ("", "0", "1", "true", "false"):
+        abort(400, f"{name} must be 1 or 0")
+    return raw in ("1", "true")
+
+
+def _filtered_deals():
+    """Rows for /api/deals and /api/deals/count after every filter and the sort, before offset and limit.
+    A filter on a field hides the cars that lack it."""
     min_score = request.args.get("min_score", 0.0, type=float)
     make      = request.args.get("make", "").strip().lower()[:60]
     model_q   = request.args.get("model", "").strip().lower()[:60]
     body_q    = request.args.get("body", "").strip().lower()[:60]
+    lim = {n: _arg_int(n, None, 0, 10_000_000) for n in ("min_price", "max_price", "min_miles", "max_miles", "min_year", "max_year")}
+    choice = {n: _arg_choices(n) for n in _CHOICES}
+    sort = request.args.get("sort", "").strip().lower()
+    if sort not in ("", "score", "featured", "mpg"):
+        abort(400, "sort must be score, featured or mpg")
+    seed = _arg_int("seed", 0, 0, 2**31 - 1)
 
     rows = _deal_records(_db_version())
     if min_score > 0:
         rows = [r for r in rows if (r["deal_score"] or 0) >= min_score]
     if make:
-        rows = [r for r in rows if make in str(r["make"] or "").lower()]
+        rows = [r for r in rows if make == str(r["make"] or "").lower()]
     if model_q:
-        rows = [r for r in rows if model_q in str(r["model"] or "").lower()]
+        rows = [r for r in rows if model_q == str(r["model"] or "").lower()]
     if body_q in {"unknown", "null", "(null)", "none"}:
         rows = [r for r in rows if not (r["body_type"] or "").strip() or r["body_type"].lower() == "nan"]
     elif body_q:
         rows = [r for r in rows if body_q in (r["body_type"] or "").lower()]
+    if choice["drivetrain"]:
+        rows = [r for r in rows if (r["drivetrain"] or "").lower() in choice["drivetrain"]]
+    if choice["fuel"]:
+        rows = [r for r in rows if r["fuel"] in choice["fuel"]]
+    if choice["color"]:
+        rows = [r for r in rows if r["color_family"] in choice["color"]]
+    for col, key in (("price", "price"), ("mileage", "miles"), ("year", "year")):
+        if lim["min_" + key] is not None:
+            rows = [r for r in rows if r[col] is not None and r[col] >= lim["min_" + key]]
+        if lim["max_" + key] is not None:
+            rows = [r for r in rows if r[col] is not None and r[col] <= lim["max_" + key]]
+    if _arg_flag("has_photo"):
+        rows = [r for r in rows if r["photo_url"]]
+    if _arg_flag("reduced"):
+        rows = [r for r in rows if r["reduced"]]
+    if sort == "featured":
+        # Same seed, same order: shuffle in listing_id order so paging never repeats or skips a car.
+        rows = sorted((r for r in rows if r["photo_url"] and (r["deal_score"] or 0) >= FEATURED_MIN_SCORE),
+                      key=lambda r: r["listing_id"])
+        random.Random(seed).shuffle(rows)
+    elif sort == "mpg":   # city/highway average, cars without MPG last
+        def mpg(r):
+            v = [m for m in (r["city_mpg"], r["highway_mpg"]) if m]
+            return -sum(v) / len(v) if v else float("inf")
+        rows = sorted(rows, key=mpg)
+    return rows
+
+
+@app.route("/api/deals")
+@db_cached(*_DEAL_PARAMS, maxsize=64)
+def deals():
+    """
+    Returns "deal finder" rows, best first.
+
+    deal_score is 0-100 where 100 is best deal.
+    Query params (all optional; a bad value is a 400; a filter hides cars that lack the field):
+      - limit, offset: page of the result (default: all)
+      - min_score: minimum deal_score; make/model: exact match, any case
+      - body: body type filter (e.g. SUV, Sedan, Truck). Use "unknown" for NULLs.
+      - drivetrain (awd,4wd,fwd,rwd), fuel (gas,hybrid,electric,diesel), color (black,white,silver,grey,blue,red,green,brown,other):
+        comma-separated lists mean "any of"
+      - min_price, max_price, min_miles, max_miles, min_year, max_year; has_photo=1; reduced=1 (a believable price cut)
+      - sort: score (default), featured (seeded shuffle of cars with a photo and a fair-or-better grade), mpg
+      - seed: whole number for sort=featured
+    """
+    limit  = _arg_int("limit", None, 1, 50_000)
+    offset = _arg_int("offset", 0, 0, 10_000_000)
+    rows = _filtered_deals()[offset:]
     return jsonify(rows[:limit] if limit else rows)
+
+
+@app.route("/api/deals/count")
+@db_cached(*_DEAL_PARAMS, maxsize=64)
+def deals_count():
+    """How many cars /api/deals returns for the same filters (limit and offset ignored): {"count": N}."""
+    return jsonify({"count": len(_filtered_deals())})
 
 
 @app.route("/api/specs")
@@ -442,6 +535,11 @@ def car(vin):
             "vin": vin, "listing_id": c.listing_id, "url": c.url, "photo_url": ss(c.photo_url),
             "year": c.year, "make": c.make, "model": c.model, "trim": ss(c.trim),
             "price": sf(c.price), "mileage": si(c.mileage), "dealer_name": ss(c.dealer_name),
+            "dealer_type": ss(c.dealer_type), "drivetrain": ss(c.drivetrain), "fuel_type": ss(c.fuel_type),
+            "fuel": market.fuel_family(ss(c.fuel_type), ss(c.powertrain_type)),
+            "exterior_color": ss(c.exterior_color), "base_ext_color": ss(c.base_ext_color),
+            "color_family": market.color_family(c.base_ext_color, c.exterior_color) if c.base_ext_color or c.exterior_color else None,
+            "city_mpg": si(c.city_mpg), "highway_mpg": si(c.highway_mpg), **_extras(c),
             "location_city": c.location_city, "location_state": c.location_state,
             "days_on_market": si(c.days_listed), "days_in_listing": si(c.dom_active),
             "first_listed": str(c.first_seen_at_mc_date)[:10] if c.first_seen_at_mc_date else None,

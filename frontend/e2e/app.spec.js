@@ -19,11 +19,9 @@ test("home shows the top deals with photos and links to the listings", async ({ 
 test("a filter picked from the dropdown narrows the results and the URL", async ({ page }) => {
   await page.goto("/listings");
   await expect(page.getByRole("status")).toHaveText("3 results");
-  if (await page.getByRole("button", { name: /^Filters/ }).isVisible()) {
-    await page.getByRole("button", { name: /^Filters/ }).click(); // phone: filters start closed
-  }
   await page.getByRole("button", { name: "Make All makes" }).click();
   await page.getByRole("option", { name: "Toyota" }).click();
+  await page.getByRole("button", { name: "Show 2 cars" }).click(); // the count follows the pending filters; the list changes on Show
   await expect(page.getByRole("status")).toHaveText("2 results");
   await expect(page).toHaveURL(/make=toyota/);
   expect(await noSideScroll(page)).toBe(true);
@@ -37,7 +35,8 @@ test("the sort dropdown works from the keyboard", async ({ page }) => {
   await expect(page.getByRole("listbox", { name: "Sort by" })).toBeVisible();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter"); // third option: Price
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter"); // fourth option: Price (after Featured, Deal score, Below market)
   await expect(sort).toHaveText("Price");
   await expect(sort).toBeFocused();
   await expect(page).toHaveURL(/sort=price/);
@@ -96,12 +95,25 @@ test("cars without a photo get a short band, and the photo filter hides them", a
   await expect(noPhoto.getByText("No photo available")).toBeVisible();
   const box = await noPhoto.locator(".card-photo").boundingBox();
   expect(box.height / box.width).toBeLessThan(0.45); // 16:6, not the 16:10 photo box
-  if (await page.getByRole("button", { name: /^Filters/ }).isVisible()) {
-    await page.getByRole("button", { name: /^Filters/ }).click();
-  }
+  await page.getByRole("button", { name: /^More filters/ }).click();
   await page.getByLabel("Only cars with a photo").check();
+  await page.getByRole("button", { name: "Show 2 cars" }).click();
   await expect(page.getByRole("status")).toHaveText("2 results");
   await expect(page).toHaveURL(/photo=1/);
+});
+
+test("More filters is closed at first; a colour filter shows as a chip and narrows the list", async ({ page }) => {
+  await page.goto("/listings");
+  const more = page.getByRole("button", { name: /^More filters/ });
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Black" })).toHaveCount(0);
+  await more.click();
+  await page.getByRole("button", { name: "Black" }).click();
+  await page.getByRole("button", { name: "Show 1 car" }).click();
+  await expect(page.getByRole("status")).toHaveText("1 results");
+  await expect(page.getByRole("button", { name: "Remove filter: Colour: Black" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^More filters · 1/ })).toBeVisible();
+  await expect(page).toHaveURL(/color=black/);
 });
 
 test("a shared price-check link shows its car and progress while data loads", async ({ page }) => {

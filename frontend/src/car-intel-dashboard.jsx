@@ -1,28 +1,21 @@
 import { Fragment, useState, useEffect, useMemo } from "react";
 import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
-import { dealTier } from "./utils/scoreColor.js";
 import { Select } from "./components/Select";
 import Market from "./market/Market";
 import { marketPath as marketUrl } from "./market/api";
 import { plural } from "./market/format";
-import { BrandMark, CardSkeleton, DealPill, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, daysSinceSeen, vsMarket } from "./components/ui";
+import { BrandMark, CardSkeleton, Certified, DealPill, FUEL_LABELS, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, driveFuel, showFees, vsMarket } from "./components/ui";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
-
-// Body types that support Small/Medium/Large sub-filtering (matched lowercase)
-const SIZE_SUPPORTED = new Set(["suv", "truck", "sedan", "hatchback"]);
-
-// Approximate size bands by predicted price (proxy for vehicle size within a category)
-const SIZE_PRICE_BANDS = {
-  Small: { max: 22000 },
-  Medium: { min: 18000, max: 40000 },
-  Large: { min: 35000 },
-};
 
 const PRICE_STEPS = [5000, 10000, 15000, 20000, 25000, 30000, 40000, 50000, 75000];
 const MILEAGE_STEPS = [10000, 25000, 50000, 75000, 100000, 150000, 200000];
 
 // Lowest deal tier shown (scoreColor.js: 3 = Fair price, 4 = Good, 5 = Great).
+// Lowest deal_score of each tier (the same cuts as utils/scoreColor.js), as the API's min_score.
+const TIER_MIN_SCORE = { 3: 35, 4: 65, 5: 90 };
+const DRIVETRAINS = ["AWD", "4WD", "FWD", "RWD"];
+const COLORS = ["white", "black", "grey", "silver", "blue", "red", "green", "brown", "other"];
 const GRADE_CHOICES = [
   { tier: 1, label: "Any price" },
   { tier: 3, label: "Fair price or better" },
@@ -33,13 +26,46 @@ const GRADE_CHOICES = [
 // Sort fields: the direction each starts in when picked, and what each
 // direction means in plain words (shown on the flip button).
 const SORTS = {
+  featured: { label: "Featured",   start: "desc", asc: "Best first",   desc: "Best first" },
   score:   { label: "Deal score",   start: "desc", asc: "Worst first",  desc: "Best first" },
   savings: { label: "Below market", start: "desc", asc: "Least first",  desc: "Most first" },
   price:   { label: "Price",        start: "asc",  asc: "Low to high",  desc: "High to low" },
   mileage: { label: "Mileage",      start: "asc",  asc: "Low to high",  desc: "High to low" },
   year:    { label: "Year",         start: "desc", asc: "Oldest first", desc: "Newest first" },
   found:   { label: "Date found",   start: "desc", asc: "Oldest first", desc: "Newest first" },
+  mpg:     { label: "Fuel economy", start: "desc", asc: "Low to high",  desc: "High to low" },
 };
+
+// One shuffle order per visit, so a reload or a second page of cars doesn't reorder the list.
+const SEED = (() => {
+  try {
+    const saved = sessionStorage.getItem("carintel-seed");
+    if (saved) return saved;
+    const fresh = String(Math.floor(Math.random() * 1e9));
+    sessionStorage.setItem("carintel-seed", fresh);
+    return fresh;
+  } catch (e) {
+    return "1";
+  }
+})();
+
+// The API's query string for a set of filters (URL-named, see fromUrlParams).
+const API_PARAMS = { make: "make", model: "model", body: "body", price_from: "min_price", price_to: "max_price", year_from: "min_year", year_to: "max_year", miles_from: "min_miles", miles_to: "max_miles", drivetrain: "drivetrain", fuel: "fuel", color: "color", photo: "has_photo", reduced: "reduced" };
+const apiQuery = (f) => {
+  const q = new URLSearchParams();
+  Object.entries(API_PARAMS).forEach(([k, name]) => f[k] && q.set(name, f[k]));
+  if (f.grade > 1) q.set("min_score", TIER_MIN_SCORE[f.grade]);
+  return q.toString();
+};
+
+// Listing and photo URLs come from third-party data: only http(s) links
+// reach an href, and only https photos reach an <img>.
+const clean = (rows) =>
+  rows.map((d) => ({
+    ...d,
+    url: /^https?:\/\//i.test(d.url || "") ? d.url : null,
+    photo_url: /^https:\/\//i.test(d.photo_url || "") ? d.photo_url : null,
+  }));
 
 const GRADE_MEANINGS = [
   [95, "Well below what similar cars list for, far outside our estimate's usual margin of error."],
@@ -79,14 +105,15 @@ function fromUrl() {
 function fromUrlParams(q, view) {
   const get = (k, d = "") => (view === "home" ? d : q.get(k) ?? d);
   const grade = Number(get("grade", "1"));
-  const sortKey = SORTS[get("sort")] ? get("sort") : "score";
+  const sortKey = SORTS[get("sort")] ? get("sort") : "featured";
   const dir = get("dir").toLowerCase();
   return {
     view,
     listingId: "",
     marketPath: "",
     make: get("make"), model: get("model"), trim: get("trim"),
-    body: get("body"), size: get("size"),
+    body: get("body"),
+    drivetrain: get("drivetrain"), fuel: get("fuel"), color: get("color"),
     priceFrom: get("price_from"), priceTo: get("price_to"),
     yearFrom: get("year_from"), yearTo: get("year_to"),
     milesFrom: get("miles_from"), milesTo: get("miles_to"),
@@ -127,7 +154,6 @@ export default function CarIntelDashboard() {
   const isRes = initial.view === "results";
   const [makeFilter, setMakeFilter] = useState(isRes ? initial.make : "");
   const [modelFilter, setModelFilter] = useState(isRes ? initial.model : "");
-  const [sizeFilter, setSizeFilter] = useState(initial.size);
   const [bodyFilter, setBodyFilter] = useState(initial.body);
   const [minPrice, setMinPrice] = useState(initial.priceFrom);
   const [maxPrice, setMaxPrice] = useState(initial.priceTo);
@@ -140,8 +166,22 @@ export default function CarIntelDashboard() {
   const [reducedOnly, setReducedOnly] = useState(initial.reduced);
   const [sortKey, setSortKey] = useState(initial.sortKey);
   const [sortDir, setSortDir] = useState(initial.sortDir);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [driveFilter, setDriveFilter] = useState(initial.drivetrain);
+  const [fuelFilter, setFuelFilter] = useState(initial.fuel);
+  const [colorFilter, setColorFilter] = useState(initial.color); // comma list of colour families
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [count, setCount] = useState(null); // cars the filters being edited would show
   const [visibleCount, setVisibleCount] = useState(60);
+
+  // Filters being edited, in URL names; "applied" is what the list on screen was fetched with (set by the Show button).
+  const pending = {
+    make: makeFilter, model: modelFilter, body: bodyFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear,
+    miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", photo: photoOnly ? "1" : "", reduced: reducedOnly ? "1" : "",
+    drivetrain: driveFilter, fuel: fuelFilter, color: colorFilter,
+  };
+  const [applied, setApplied] = useState(pending);
+  const [commit, setCommit] = useState(0);
+  const [results, setResults] = useState({ rows: [], state: "loading" }); // state: loading | ok | error
 
   const [deals, setDeals] = useState([]);
   const [preview, setPreview] = useState([]); // top deals, shown while the full list loads
@@ -172,14 +212,6 @@ export default function CarIntelDashboard() {
         setLoading((l) => ({ ...l, [key]: false }));
       }
     };
-    // Listing and photo URLs come from third-party data: only http(s) links
-    // reach an href, and only https photos reach an <img>.
-    const clean = (rows) =>
-      rows.map((d) => ({
-        ...d,
-        url: /^https?:\/\//i.test(d.url || "") ? d.url : null,
-        photo_url: /^https:\/\//i.test(d.photo_url || "") ? d.photo_url : null,
-      }));
     // The top 100 deals arrive in a fraction of the full list's time, so the
     // first screen shows real listings while everything else downloads.
     fetch(`${API}/deals?limit=100`)
@@ -189,6 +221,40 @@ export default function CarIntelDashboard() {
     load("deals", `${API}/deals?min_score=0`, (rows) => setDeals(clean(rows)));
     load("stats", `${API}/stats`, setStats);
   }, []);
+
+  // Entering the listings, or pressing Show, applies the filters being edited.
+  useEffect(() => {
+    if (view === "results") setApplied(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, commit]);
+
+  // The list: filtered by the API; Featured is its seeded shuffle, the other sorts happen below.
+  const featured = sortKey === "featured";
+  const featuredQuery = featured ? `sort=featured&seed=${SEED}` : ""; // Featured shows only graded cars with a photo, so the count must ask for it too
+  useEffect(() => {
+    if (view !== "results") return undefined;
+    const ctl = new AbortController();
+    setResults((r) => ({ ...r, state: "loading" }));
+    fetch(`${API}/deals?${[apiQuery(applied), featuredQuery].filter(Boolean).join("&")}`, { signal: ctl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
+      .then((rows) => setResults({ rows: clean(rows), state: "ok" }))
+      .catch((e) => e.name !== "AbortError" && setResults({ rows: [], state: "error" }));
+    return () => ctl.abort();
+  }, [view, applied, featuredQuery]);
+
+  // How many cars the filters being edited would show, asked a moment after the last change.
+  const pendingQuery = [apiQuery(pending), featuredQuery].filter(Boolean).join("&");
+  useEffect(() => {
+    if (view !== "results" && view !== "home") return undefined;
+    const ctl = new AbortController();
+    const t = setTimeout(() => {
+      fetch(`${API}/deals/count?${pendingQuery}`, { signal: ctl.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setCount(d ? d.count : null))
+        .catch(() => {});
+    }, 250);
+    return () => { clearTimeout(t); ctl.abort(); };
+  }, [view, pendingQuery]);
 
   // Spec sheet and photo gallery for the open listing. Specs stay empty until the pipeline has fetched them.
   useEffect(() => {
@@ -257,47 +323,41 @@ export default function CarIntelDashboard() {
   // Home page: only cars with a photo; the full listings page still shows all.
   const topDeals = useMemo(() => (deals.length ? deals : preview).filter((d) => d.deal_score != null && !d.rating_basis && d.photo_url).sort((a, b) => b.deal_score - a.deal_score), [deals, preview]);
 
-  const filteredDeals = useMemo(() => {
-    const arr = deals
-      .filter((d) => minStars <= 1 || (d.deal_score != null && dealTier(d.deal_score) >= minStars))
-      .filter((d) => !photoOnly || d.photo_url)
-      .filter((d) => !reducedOnly || d.reduced)
-      .filter((d) => !makeFilter || d.make?.toLowerCase() === makeFilter)
-      .filter((d) => !modelFilter || d.model?.toLowerCase() === modelFilter)
-      .filter((d) => !bodyFilter || normalizeBodyType(d.body_type).toLowerCase() === bodyFilter.toLowerCase())
-      .filter((d) => {
-        const band = SIZE_PRICE_BANDS[sizeFilter];
-        if (!band) return true;
-        const p = d.predicted_price ?? d.price;
-        return !(band.min && p < band.min) && !(band.max && p > band.max);
-      })
-      .filter((d) => !minPrice || d.price >= Number(minPrice))
-      .filter((d) => !maxPrice || d.price <= Number(maxPrice))
-      .filter((d) => !minYear || d.year >= Number(minYear))
-      .filter((d) => !maxYear || d.year <= Number(maxYear))
-      .filter((d) => !minMileage || d.mileage >= Number(minMileage))
-      .filter((d) => !maxMileage || d.mileage <= Number(maxMileage));
-
+  // Featured keeps the API's order; every other sort is applied to the rows it returned.
+  const sortedDeals = useMemo(() => {
+    if (featured) return results.rows;
     const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : -Infinity);
     const field = { score: "deal_score", price: "price", savings: "savings", mileage: "mileage", year: "year" }[sortKey];
     // null = unknown; sorted last in either direction rather than as 0.
     const val = (d) => {
-      const v = sortKey === "found" ? Date.parse(d.first_seen) : d[field] == null ? NaN : Number(d[field]);
+      const m = [d.city_mpg, d.highway_mpg].filter(Boolean);
+      const v = sortKey === "found" ? Date.parse(d.first_seen) : sortKey === "mpg" ? (m.length ? m.reduce((a, b) => a + b) / m.length : NaN) : d[field] == null ? NaN : Number(d[field]);
       return Number.isFinite(v) ? v : null;
     };
     const dir = sortDir === "asc" ? 1 : -1;
-    return arr.sort((a, b) => {
+    return [...results.rows].sort((a, b) => {
       const x = val(a), y = val(b);
       if (x === null || y === null) return (x === null) - (y === null);
       return x === y ? num(b.deal_score) - num(a.deal_score) : (x - y) * dir;
     });
-  }, [deals, minStars, photoOnly, reducedOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
+  }, [results.rows, featured, sortKey, sortDir]);
+  const hasMpg = useMemo(() => results.rows.filter((d) => d.city_mpg || d.highway_mpg).length >= 20, [results.rows]);
 
   // Thousands of cards at once would make the page sluggish: render a slice.
-  useEffect(() => setVisibleCount(60), [minStars, photoOnly, reducedOnly, makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, sortKey, sortDir]);
+  useEffect(() => setVisibleCount(60), [results.rows, sortKey, sortDir]);
 
-  const anyFilter = makeFilter || modelFilter || sizeFilter || bodyFilter || minPrice || maxPrice || minYear || maxYear || minMileage || maxMileage || minStars > 1 || photoOnly || reducedOnly;
-  const activeFilterCount = [makeFilter, modelFilter, sizeFilter, bodyFilter, minPrice || maxPrice, minYear || maxYear, minMileage || maxMileage, minStars > 1, photoOnly, reducedOnly].filter(Boolean).length;
+  const advanced = [driveFilter, fuelFilter, colorFilter, minMileage || maxMileage, maxYear, photoOnly, reducedOnly];
+  const anyFilter = makeFilter || modelFilter || bodyFilter || minPrice || maxPrice || minYear || minStars > 1 || advanced.some(Boolean);
+  // What the applied advanced filters say, each with the way to remove it.
+  const chips = [
+    applied.drivetrain && [`Drivetrain: ${applied.drivetrain.toUpperCase()}`, () => setDriveFilter("")],
+    applied.fuel && [`Fuel: ${FUEL_LABELS[applied.fuel]}`, () => setFuelFilter("")],
+    applied.color && [`Colour: ${applied.color.split(",").map(cap).join(", ")}`, () => setColorFilter("")],
+    (applied.miles_from || applied.miles_to) && [applied.miles_from && applied.miles_to ? `${fmtN(applied.miles_from)} to ${fmtN(applied.miles_to)} miles` : applied.miles_from ? `Over ${fmtN(applied.miles_from)} miles` : `Under ${fmtN(applied.miles_to)} miles`, () => { setMinMileage(""); setMaxMileage(""); }],
+    applied.year_to && [`${applied.year_to} or older`, () => setMaxYear("")],
+    applied.photo && ["With a photo", () => setPhotoOnly(false)],
+    applied.reduced && ["Recently reduced", () => setReducedOnly(false)],
+  ].filter(Boolean);
 
   // Keep the address bar in step with the view and its inputs. A new view is
   // a history entry (Back returns to it); input changes replace the current
@@ -305,7 +365,7 @@ export default function CarIntelDashboard() {
   useEffect(() => {
     const url =
       view === "results"
-        ? toUrl(view, { make: makeFilter, model: modelFilter, body: bodyFilter, size: sizeFilter, price_from: minPrice, price_to: maxPrice, year_from: minYear, year_to: maxYear, miles_from: minMileage, miles_to: maxMileage, grade: minStars > 1 ? minStars : "", photo: photoOnly ? "1" : "", reduced: reducedOnly ? "1" : "", sort: sortKey !== "score" ? sortKey : "", dir: sortDir !== SORTS[sortKey].start ? sortDir : "" })
+        ? toUrl(view, { ...applied, sort: sortKey !== "featured" ? sortKey : "", dir: sortKey !== "featured" && sortDir !== SORTS[sortKey].start ? sortDir : "" })
         : view === "estimator"
         ? toUrl(view, { make: estMake, model: estModel, trim: estTrim, year: estYear, mileage: estMileage })
         : view === "listing"
@@ -320,7 +380,7 @@ export default function CarIntelDashboard() {
     } else {
       window.history.replaceState(null, "", url);
     }
-  }, [view, listingId, marketPath, makeFilter, modelFilter, bodyFilter, sizeFilter, minPrice, maxPrice, minYear, maxYear, minMileage, maxMileage, minStars, photoOnly, reducedOnly, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
+  }, [view, listingId, marketPath, applied, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
 
   useEffect(() => {
     if (view !== "market") document.title = PAGE_TITLES[view]; // the Market pages name themselves
@@ -333,9 +393,9 @@ export default function CarIntelDashboard() {
     setListingId(u.listingId);
     setMarketPath(u.marketPath);
     if (u.view === "results") {
-      setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setSizeFilter(u.size);
+      setMakeFilter(u.make); setModelFilter(u.model); setBodyFilter(u.body); setDriveFilter(u.drivetrain); setFuelFilter(u.fuel); setColorFilter(u.color);
       setMinPrice(u.priceFrom); setMaxPrice(u.priceTo); setMinYear(u.yearFrom); setMaxYear(u.yearTo);
-      setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setReducedOnly(u.reduced); setSortKey(u.sortKey); setSortDir(u.sortDir);
+      setMinMileage(u.milesFrom); setMaxMileage(u.milesTo); setMinStars(u.grade); setPhotoOnly(u.photo); setReducedOnly(u.reduced); setSortKey(u.sortKey); setSortDir(u.sortDir); setCommit((c) => c + 1);
     } else if (u.view === "estimator") {
       setEstMake(u.make); setEstModel(u.model); setEstTrim(u.trim); setEstYear(u.year); setEstMileage(u.mileage);
     }
@@ -389,7 +449,7 @@ export default function CarIntelDashboard() {
   }, []);
 
   const resetFilters = () => {
-    setMakeFilter(""); setModelFilter(""); setSizeFilter(""); setBodyFilter("");
+    setMakeFilter(""); setModelFilter(""); setBodyFilter(""); setDriveFilter(""); setFuelFilter(""); setColorFilter("");
     setMinPrice(""); setMaxPrice(""); setMinYear(""); setMaxYear("");
     setMinMileage(""); setMaxMileage(""); setMinStars(1); setPhotoOnly(false); setReducedOnly(false);
   };
@@ -421,6 +481,30 @@ export default function CarIntelDashboard() {
     apply?.();
     setView("results");
   };
+
+  const showLabel = count == null ? "Show cars" : `Show ${fmtN(count)} ${count === 1 ? "car" : "cars"}`;
+  // The four common filters and the Show button, as on the home page and above the list.
+  const primaryRow = (onShow) => (
+    <>
+      <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
+        <option value="">All makes</option>
+        {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
+      </Select>
+      <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
+        <option value="">All models</option>
+        {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
+      </Select>
+      <Select label="Body type" value={bodyFilter} onChange={setBodyFilter}>
+        <option value="">All body types</option>
+        {bodyCounts.map(([b]) => <option key={b} value={b}>{b}</option>)}
+      </Select>
+      <Select label="Max price" value={maxPrice} onChange={setMaxPrice}>
+        <option value="">Any price</option>
+        {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
+      </Select>
+      <button className="btn" onClick={onShow}>{showLabel}</button>
+    </>
+  );
 
   const wrap = view === "results" ? "wrap wide" : "wrap";
   const header = (
@@ -476,34 +560,13 @@ export default function CarIntelDashboard() {
 
   // ── HOME ────────────────────────────────────────────────────────────────────
   if (view === "home") {
-    const homeCount = loading.deals ? null : filteredDeals.length;
     return (
       <>
         {header}
         <main className="wrap" id="main" tabIndex={-1}>
           <h1 id="search-title" className="page-title">Search {total ? fmtN(total) : ""} used cars, each graded on price</h1>
           <section className="search-panel" aria-labelledby="search-title">
-            <div className="search-grid">
-              <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
-                <option value="">All makes</option>
-                {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
-              </Select>
-              <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
-                <option value="">All models</option>
-                {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
-              </Select>
-              <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); setSizeFilter(""); }}>
-                <option value="">All body types</option>
-                {bodyCounts.map(([b]) => <option key={b} value={b}>{b}</option>)}
-              </Select>
-              <Select label="Max price" value={maxPrice} onChange={setMaxPrice}>
-                <option value="">Any price</option>
-                {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-              </Select>
-              <button className="btn" onClick={() => setView("results")}>
-                {homeCount == null ? "Show cars" : `Show ${fmtN(homeCount)} cars`}
-              </button>
-            </div>
+            <div className="search-grid">{primaryRow(() => setView("results"))}</div>
             <div className="quick-links">
               <button className="chip" onClick={() => showListings(() => setMinStars(4))}>Good deals</button>
               <button className="chip" onClick={() => showListings(() => setMaxPrice("15000"))}>Under $15,000</button>
@@ -598,12 +661,22 @@ export default function CarIntelDashboard() {
     }
     const name = `${deal.year} ${deal.make} ${deal.model}`;
     const vm = vsMarket(deal.savings);
-    const seen = daysSinceSeen(deal);
+    const onSale = daysOnSale(deal);
+    const atDealer = deal.dos_active != null && Math.abs(onSale - deal.dos_active) >= 7 ? deal.dos_active : null; // shown only when it differs clearly
+    const color = deal.exterior_color || deal.base_ext_color;
+    const dealerKind = { franchise: "Franchise dealer", independent: "Independent dealer" }[deal.dealer_type];
+    const dealerLine = [dealerKind, deal.stock_no && `Stock ${deal.stock_no}`].filter(Boolean).join(" · ");
     const rated = deal.deal_score != null;
     const comps = deals
       .filter((d) => d.listing_id !== deal.listing_id && d.make === deal.make && d.model === deal.model && Math.abs(d.year - deal.year) <= 1 && d.mileage != null)
       .sort((a, b) => Math.abs(a.mileage - deal.mileage) - Math.abs(b.mileage - deal.mileage))
       .slice(0, 5);
+    // The listing's own length wins over the NHTSA one.
+    const lengthRow = deal.overall_length != null ? ["Length", `${Number(deal.overall_length).toFixed(1)} in`] : null;
+    const specsWithLength = !lengthRow ? specs
+      : specs.some((g) => g.group === "Dimensions & Weights")
+        ? specs.map((g) => (g.group !== "Dimensions & Weights" ? g : { ...g, rows: g.rows.some(([l]) => l === "Length") ? g.rows.map((r) => (r[0] === "Length" ? lengthRow : r)) : [lengthRow, ...g.rows] }))
+        : [...specs, { group: "Dimensions & Weights", rows: [lengthRow] }];
     const k = deal.comparables;
     const carName = `${deal.year} ${deal.make} ${deal.model}`;
     const err = deal.typical_error_pct;
@@ -618,9 +691,12 @@ export default function CarIntelDashboard() {
             <Gallery key={deal.listing_id} photos={photos.length ? photos : [deal.photo_url].filter(Boolean)} alt={name} />
             <section className="panel" aria-labelledby="listing-title">
               <DealPill score={deal.deal_score} />
+              {deal.is_certified === 1 && <Certified />}
               <h1 id="listing-title" style={{ marginTop: 10 }}>{name}</h1>
               <div className="card-sub">{[deal.trim, normalizeBodyType(deal.body_type)].filter((v) => v && v !== "Unknown").join(", ")}</div>
+              {driveFuel(deal) && <div className="card-sub">{driveFuel(deal)}</div>}
               <div className="card-price num">{fmt$(deal.price)}</div>
+              {showFees(deal) && <div className="fees num">Plus {fmt$(deal.fees)} dealer fees</div>}
               {rated ? <>
                 <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
                 <PriceBar score={deal.deal_score} />
@@ -630,13 +706,22 @@ export default function CarIntelDashboard() {
                 {rated && <><dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd></>}
                 <dt>Mileage</dt><dd className="num">{fmtN(deal.mileage)} mi</dd>
                 <dt>Location</dt><dd>{[deal.location_city, deal.location_state].filter(Boolean).join(", ") || "—"}</dd>
-                <dt>On sale for</dt>
-                <dd className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>{fmtN(daysOnSale(deal))} days</dd>
+                {color && <><dt>Colour</dt><dd>{deal.color_family && <i className="sw" style={{ "--sw": `var(--c-${deal.color_family})` }} />}{cap(color.toLowerCase())}</dd></>}
+                {(deal.interior_color || deal.base_int_color) && <><dt>Interior</dt><dd>{cap((deal.interior_color || deal.base_int_color).toLowerCase())}</dd></>}
+                <dt>{atDealer != null ? "On the market" : "On sale for"}</dt>
+                <dd className={`num ${onSale >= STALE_DAYS ? "caution" : ""}`}>{fmtN(onSale)} days</dd>
+                {atDealer != null && <><dt>At this dealer</dt><dd className="num">{fmtN(atDealer)} days</dd></>}
                 {deal.reduced && <><dt>Reduced</dt><dd className="num">Was {fmt$(deal.reduced.was)}, now {fmt$(deal.price)} (−{Math.round(deal.reduced.pct)}%)</dd></>}
-                <dt>Last seen</dt>
-                <dd className={seen > 7 ? "caution" : ""}>{seen == null ? "—" : seen <= 1 ? "In the last day" : `${seen} days ago`}</dd>
-                {deal.dealer_name && <><dt>Dealer</dt><dd>{deal.dealer_name}</dd></>}
-                {deal.dealer_street && <><dt>Address</dt><dd>{[deal.dealer_street, deal.location_city, deal.location_state].filter(Boolean).join(", ")}</dd></>}
+                {deal.dealer_name && (
+                  <>
+                    <dt>Dealer</dt>
+                    <dd>
+                      {deal.dealer_name}
+                      {dealerLine && <span className="dealer-sub">{dealerLine}</span>}
+                      {deal.dealer_street && <span className="dealer-sub">{[deal.dealer_street, deal.location_city, deal.location_state].filter(Boolean).join(", ")}</span>}
+                    </dd>
+                  </>
+                )}
                 {/* Many small dealers' sites block visitors they think are bots; a phone number is never blocked. */}
                 {deal.dealer_phone && <><dt>Phone</dt><dd><a href={`tel:${deal.dealer_phone.replace(/[^\d+]/g, "")}`}>{deal.dealer_phone}</a></dd></>}
               </dl>
@@ -720,11 +805,11 @@ export default function CarIntelDashboard() {
             </section>
           )}
 
-          {specs.length > 0 && (
+          {specsWithLength.length > 0 && (
             <section className="section" aria-labelledby="specs-title">
               <div className="section-head"><h2 id="specs-title">Specifications</h2></div>
               <div className="panel specs">
-                {specs.map((g, i) => (
+                {specsWithLength.map((g, i) => (
                   <details key={g.group} open={i === 0}>
                     <summary>{g.group}</summary>
                     <dl className="facts">
@@ -732,7 +817,7 @@ export default function CarIntelDashboard() {
                     </dl>
                   </details>
                 ))}
-                <p className="specs-note">Model specs from NHTSA. Confirm details with the dealer.</p>
+                <p className="specs-note">Specs from the dealer’s listing and NHTSA. Confirm details with the dealer.</p>
               </div>
             </section>
           )}
@@ -842,60 +927,63 @@ export default function CarIntelDashboard() {
   }
 
   // ── LISTINGS ────────────────────────────────────────────────────────────────
-  // While the full list loads, the default view (best deals, no filters) can
-  // already show the top-100 preview, which is the same rows.
-  const cards = !loading.deals ? filteredDeals.slice(0, visibleCount) : !anyFilter && sortKey === "score" && sortDir === "desc" ? preview.slice(0, visibleCount) : [];
+  const cards = sortedDeals.slice(0, visibleCount);
+  const clearAll = () => { resetFilters(); setCommit((c) => c + 1); };
+  const removeChip = (fn) => () => { fn(); setCommit((c) => c + 1); };
+  const appliedMore = chips.length;
   return (
     <>
       {header}
       <main className={wrap} id="main" tabIndex={-1}>
-        <div className="listings-layout">
-          <aside className={`filters-panel${filtersOpen ? " open" : ""}`} id="filters" aria-label="Filters">
-            <h2>
-              Filters
-              {anyFilter && <button className="btn-link" onClick={resetFilters}>Clear all</button>}
-            </h2>
-            <Select label="Make" value={makeFilter} onChange={(v) => { setMakeFilter(v); setModelFilter(""); }}>
-              <option value="">All makes</option>
-              {keep(makeOptions, makeFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
+        <section className="search-panel" aria-label="Filters" style={{ marginTop: 28 }}>
+          <div className="search-grid">{primaryRow(() => setCommit((c) => c + 1))}</div>
+          <div className="filter-row">
+            <Select label="Min price" value={minPrice} onChange={setMinPrice}>
+              <option value="">Any</option>
+              {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
             </Select>
-            <Select label="Model" value={modelFilter} onChange={setModelFilter} disabled={!makeFilter}>
-              <option value="">All models</option>
-              {keep(modelOptions, modelFilter).map((m) => <option key={m} value={m}>{label(m)}</option>)}
+            <Select label="Year from" value={minYear} onChange={setMinYear}>
+              <option value="">Any</option>
+              {keep(yearOptions, minYear).map((y) => <option key={y} value={y}>{y}</option>)}
             </Select>
-            <Select label="Body type" value={bodyFilter} onChange={(v) => { setBodyFilter(v); if (!SIZE_SUPPORTED.has(v.toLowerCase())) setSizeFilter(""); }}>
-              <option value="">All body types</option>
-              {bodyCounts.map(([b]) => <option key={b} value={b}>{b}</option>)}
+            <Select label="Price grade" value={String(minStars)} onChange={(v) => setMinStars(Number(v))}>
+              {GRADE_CHOICES.map(({ tier, label }) => <option key={tier} value={tier}>{label}</option>)}
             </Select>
-            {SIZE_SUPPORTED.has(bodyFilter.toLowerCase()) && (
-              <Select label="Size" value={sizeFilter} onChange={setSizeFilter}>
-                <option value="">Any size</option>
-                <option value="Small">Small</option>
-                <option value="Medium">Medium</option>
-                <option value="Large">Large</option>
-              </Select>
-            )}
-            <div className="pair">
-              <Select label="Min price" value={minPrice} onChange={setMinPrice}>
-                <option value="">Any</option>
-                {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-              </Select>
-              <Select label="Max price" value={maxPrice} onChange={setMaxPrice}>
-                <option value="">Any</option>
-                {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-              </Select>
+            <div className="btns">
+              <button className="btn-quiet" aria-expanded={moreOpen} aria-controls="more-filters" onClick={() => setMoreOpen((o) => !o)}>
+                More filters{appliedMore ? ` · ${appliedMore}` : ""}
+              </button>
+              {anyFilter && <button className="btn-link" onClick={clearAll}>Clear all</button>}
             </div>
-            <div className="pair">
-              <Select label="Year from" value={minYear} onChange={setMinYear}>
-                <option value="">Any</option>
-                {keep(yearOptions, minYear).map((y) => <option key={y} value={y}>{y}</option>)}
+          </div>
+          {moreOpen && (
+            <div className="more-panel" id="more-filters">
+              <Select label="Drivetrain" value={driveFilter} onChange={setDriveFilter}>
+                <option value="">Any drivetrain</option>
+                {DRIVETRAINS.map((d) => <option key={d} value={d.toLowerCase()}>{d}</option>)}
+              </Select>
+              <Select label="Fuel" value={fuelFilter} onChange={setFuelFilter}>
+                <option value="">Any fuel</option>
+                {Object.entries(FUEL_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </Select>
               <Select label="Year to" value={maxYear} onChange={setMaxYear}>
                 <option value="">Any</option>
                 {[...keep(yearOptions, maxYear)].reverse().map((y) => <option key={y} value={y}>{y}</option>)}
               </Select>
-            </div>
-            <div className="pair">
+              <fieldset className="wide">
+                <legend>Colour</legend>
+                <div className="swatches">
+                  {COLORS.map((c) => {
+                    const on = colorFilter.split(",").includes(c);
+                    return (
+                      <button key={c} type="button" className="chip" aria-pressed={on}
+                        onClick={() => setColorFilter(COLORS.filter((x) => (x === c ? !on : colorFilter.split(",").includes(x))).join(","))}>
+                        <i className="sw" style={{ "--sw": `var(--c-${c})` }} />{cap(c)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
               <Select label="Mileage from" value={minMileage} onChange={setMinMileage}>
                 <option value="">Any</option>
                 {MILEAGE_STEPS.map((m) => <option key={m} value={m}>{fmtN(m)}</option>)}
@@ -904,67 +992,72 @@ export default function CarIntelDashboard() {
                 <option value="">Any</option>
                 {MILEAGE_STEPS.map((m) => <option key={m} value={m}>{fmtN(m)}</option>)}
               </Select>
-            </div>
-            <fieldset className="grade-options">
-              <legend>Price grade</legend>
-              {GRADE_CHOICES.map(({ tier, label }) => (
-                <label key={tier}>
-                  <input type="radio" name="grade" checked={minStars === tier} onChange={() => setMinStars(tier)} />
-                  {label}
+              <div className="wide checks">
+                <label className="check-option">
+                  <input type="checkbox" checked={photoOnly} onChange={(e) => setPhotoOnly(e.target.checked)} />
+                  Only cars with a photo
                 </label>
-              ))}
-            </fieldset>
-            <label className="check-option">
-              <input type="checkbox" checked={photoOnly} onChange={(e) => setPhotoOnly(e.target.checked)} />
-              Only cars with a photo
-            </label>
-            <label className="check-option">
-              <input type="checkbox" checked={reducedOnly} onChange={(e) => setReducedOnly(e.target.checked)} />
-              Recently reduced
-            </label>
-          </aside>
-
-          <section aria-labelledby="results-title">
-            <div className="results-bar">
-              <h1 id="results-title" className="page-title">
-                Used cars{" "}
-                <span className="num" role="status">{loading.deals ? "Loading…" : `${fmtN(filteredDeals.length)} results`}</span>
-              </h1>
-              <div className="results-tools">
-                <button className="btn-quiet filters-toggle" aria-expanded={filtersOpen} aria-controls="filters" onClick={() => setFiltersOpen((o) => !o)}>
-                  Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
-                </button>
-                <Select label="Sort by" hideLabel value={sortKey} onChange={(v) => { setSortKey(v); setSortDir(SORTS[v].start); }}>
-                  {Object.entries(SORTS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
-                </Select>
-                <button className="btn-quiet" title="Flip the order" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
-                  <span aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
-                </button>
+                <label className="check-option">
+                  <input type="checkbox" checked={reducedOnly} onChange={(e) => setReducedOnly(e.target.checked)} />
+                  Recently reduced
+                </label>
               </div>
+              <p className="note wide">Cars with no drivetrain, fuel or colour listed are hidden while that filter is set.</p>
             </div>
+          )}
+          {chips.length > 0 && (
+            <ul className="quick-links applied" aria-label="Applied filters" style={{ listStyle: "none", padding: 0 }}>
+              {chips.map(([text, remove]) => (
+                <li key={text}>
+                  <button className="chip" aria-label={`Remove filter: ${text}`} onClick={removeChip(remove)}>{text} <span aria-hidden="true">×</span></button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
-            {!cards.length && loading.deals ? (
-              <div className="card-grid">{[0, 1, 2, 3, 4, 5].map((i) => <CardSkeleton key={i} />)}</div>
-            ) : !cards.length ? (
-              <div className="empty">
-                <p>No cars match these filters.</p>
-                {anyFilter && <p style={{ marginTop: 8 }}>Widen the price or year range, or <button className="btn-link" onClick={resetFilters}>clear all filters</button>.</p>}
-              </div>
-            ) : (
-              <div className="card-grid">
-                {cards.map((d) => <ListingCard key={d.listing_id} level={2} {...cardProps(d)} />)}
-              </div>
-            )}
+        <section aria-labelledby="results-title" style={{ marginTop: 28 }}>
+          <div className="results-bar">
+            <h1 id="results-title" className="page-title">
+              Used cars{" "}
+              <span className="num" role="status">{results.state === "loading" ? "Loading…" : results.state === "error" ? "" : `${fmtN(sortedDeals.length)} results`}</span>
+            </h1>
+            <div className="results-tools">
+              <Select label="Sort by" hideLabel value={sortKey} onChange={(v) => { setSortKey(v); setSortDir(SORTS[v].start); }}>
+                {Object.entries(SORTS).filter(([k]) => k !== "mpg" || hasMpg || sortKey === "mpg").map(([k, sort]) => <option key={k} value={k}>{sort.label}</option>)}
+              </Select>
+              <button className="btn-quiet" title="Flip the order" disabled={featured} onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
+                <span aria-hidden="true">{featured ? "" : sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
+              </button>
+            </div>
+          </div>
 
-            {!loading.deals && visibleCount < filteredDeals.length && (
-              <div style={{ textAlign: "center", marginTop: 20 }}>
-                <button className="btn-quiet" onClick={() => setVisibleCount((v) => v + 60)}>
-                  Show more cars <span className="num" style={{ fontWeight: 400, color: "var(--muted)" }}>({fmtN(filteredDeals.length - visibleCount)} more)</span>
-                </button>
-              </div>
-            )}
-          </section>
-        </div>
+          {results.state === "error" ? (
+            <div className="alert" role="alert">
+              <p>The cars couldn't be loaded. Check your connection and try again.</p>
+              <p style={{ marginTop: 10 }}><button type="button" className="btn-quiet" onClick={() => setApplied({ ...applied })}>Try again</button></p>
+            </div>
+          ) : results.state === "loading" && !cards.length ? (
+            <div className="card-grid">{[0, 1, 2, 3, 4, 5].map((i) => <CardSkeleton key={i} />)}</div>
+          ) : !cards.length ? (
+            <div className="empty">
+              <p>No cars match these filters.</p>
+              <p style={{ marginTop: 8 }}>Widen the price or year range, or <button className="btn-link" onClick={clearAll}>clear all filters</button>.</p>
+            </div>
+          ) : (
+            <div className="card-grid" aria-busy={results.state === "loading"}>
+              {cards.map((d) => <ListingCard key={d.listing_id} level={2} {...cardProps(d)} />)}
+            </div>
+          )}
+
+          {results.state === "ok" && visibleCount < sortedDeals.length && (
+            <div style={{ textAlign: "center", marginTop: 20 }}>
+              <button className="btn-quiet" onClick={() => setVisibleCount((v) => v + 60)}>
+                Show more cars <span className="num" style={{ fontWeight: 400, color: "var(--muted)" }}>({fmtN(sortedDeals.length - visibleCount)} more)</span>
+              </button>
+            </div>
+          )}
+        </section>
       </main>
       {footer}
     </>

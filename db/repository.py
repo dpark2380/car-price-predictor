@@ -72,6 +72,8 @@ class ListingRepository:
                     "transmission", "drivetrain", "fuel_type", "powertrain_type", "engine_size",
                     "cylinders", "doors", "seats", "city_mpg", "highway_mpg", "carfax_1_owner",
                     "ref_price", "price_change_percent", "dom_active", "msrp",
+                    "fees", "price_includes_fees", "base_ext_color", "base_int_color", "interior_color", "is_certified",
+                    "stock_no", "dos_active", "dealer_website", "dealer_msa_code", "overall_length",
                     "ref_price_dt", "ref_miles", "ref_miles_dt", "first_seen_at_mc_date", "first_seen_at_source_date",
                 }
                 for k in mutable_fields:

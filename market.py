@@ -22,7 +22,8 @@ SEED = 42
 _SQL = text("""
     SELECT c.id, c.listing_id, c.vin, c.url, c.year, c.make, c.model, c.trim, c.price, c.mileage, c.dealer_name,
            c.location_city, c.location_state, c.first_seen, c.last_seen, c.days_listed, c.dom_active, c.ref_price,
-           c.first_seen_at_mc_date, c.photo_url,
+           c.first_seen_at_mc_date, c.photo_url, c.drivetrain, c.dealer_type, c.is_certified,
+           c.exterior_color, c.base_ext_color,
            p.predicted_price, p.deal_score, p.deal_label, p.rating_basis, p.comparables, p.typical_error_pct
     FROM car_listings c JOIN predictions p ON p.listing_id = c.listing_id
     WHERE c.is_active = 1 AND c.price >= :floor AND c.year IS NOT NULL AND c.make IS NOT NULL AND c.model IS NOT NULL
@@ -41,8 +42,35 @@ def load_cars(session) -> pd.DataFrame:
     df = latest_per_vin(df).reset_index(drop=True)
     df["tier"] = df["deal_score"].map(tier)
     df["gap_pct"] = (df["predicted_price"] - df["price"]) / df["predicted_price"] * 100   # + = listed below the estimate
+    df["color_family"] = [color_family(b, t) for b, t in zip(df["base_ext_color"], df["exterior_color"])]
     df["make_l"], df["model_l"] = df["make"].str.lower(), df["model"].str.lower()
     return df
+
+
+# First match wins, so "Black/White" reads black. ponytail: keyword guess, not a colour model.
+_COLORS = [("black", "black blk ebony onyx obsidian"), ("white", "white pearl ivory snow blizzard"), ("silver", "silver"),
+           ("grey", "gray grey charcoal graphite gunmetal slate"), ("blue", "blue navy"), ("red", "red maroon burgundy crimson"),
+           ("green", "green"), ("brown", "brown beige tan bronze champagne gold")]
+
+
+def color_family(base, text=None) -> str:
+    """black, white, silver, grey, blue, red, green, brown or other: from the feed's base colour when present, else the free-text colour."""
+    s = str(base if isinstance(base, str) and base.strip() else text if isinstance(text, str) else "").lower()
+    return next((fam for fam, words in _COLORS if any(w in s for w in words.split())), "other")
+
+
+def fuel_family(fuel, powertrain) -> str | None:
+    """gas, hybrid, electric, diesel or other from fuel_type and powertrain_type; None when the car has no fuel type."""
+    f, p = str(fuel or "").lower(), str(powertrain or "").upper()
+    if not f or f == "nan":
+        return None
+    if "hydrogen" in f:
+        return "other"
+    if "diesel" in f:
+        return "diesel"
+    if p in ("HEV", "MHEV", "PHEV", "EREV") or ("electric" in f and "/" in f):
+        return "hybrid"
+    return "electric" if f == "electric" or p == "BEV" else "gas"
 
 
 def tier(score) -> str:
@@ -121,7 +149,27 @@ def make_page(df: pd.DataFrame, make: str) -> dict | None:
     return {"make": d["make"].iloc[0],
             "summary": {"n": int(len(d)), "models": len(rows), "median_price": _n(d["price"].median()), "median_dom": _n(d["days_listed"].median())},
             "models": rows,
+            "dealer_types": {"franchise": int((d["dealer_type"] == "franchise").sum()), "independent": int((d["dealer_type"] == "independent").sum()),
+                             "not_stated": int((~d["dealer_type"].isin(["franchise", "independent"])).sum())},
             "monthly": [{"model": r["model"], "months": monthly(d[d["model"] == r["model"]])} for r in rows[:4]]}
+
+
+SPLIT_MIN_GROUP, CERT_MIN_GROUP = 15, 30
+
+
+def _splits(d: pd.DataFrame) -> dict:
+    """What splits the price: median price and count by drivetrain, colour-family share, certified vs not.
+    Groups under 15 cars are dropped; the certified comparison needs 30+ cars in both groups, else None."""
+    dt = d.dropna(subset=["drivetrain"]).query("drivetrain != ''")
+    by_dt = [{"drivetrain": k, "n": int(len(g)), "median_price": _n(g["price"].median())} for k, g in dt.groupby("drivetrain") if len(g) >= SPLIT_MIN_GROUP]
+    col = d["color_family"].value_counts()
+    cert = d.dropna(subset=["is_certified"])
+    yes, no = cert[cert["is_certified"] == 1], cert[cert["is_certified"] == 0]
+    both = len(yes) >= CERT_MIN_GROUP and len(no) >= CERT_MIN_GROUP
+    return {"by_drivetrain": sorted(by_dt, key=lambda r: -r["n"]),
+            "by_color": [{"color": k, "n": int(v), "share": round(v / len(d), 3)} for k, v in col.items() if v >= SPLIT_MIN_GROUP],
+            "certified": {"certified": {"n": len(yes), "median_price": _n(yes["price"].median())},
+                          "other": {"n": len(no), "median_price": _n(no["price"].median())}} if both else None}
 
 
 def model_page(df: pd.DataFrame, make: str, model: str) -> dict | None:
@@ -134,6 +182,7 @@ def model_page(df: pd.DataFrame, make: str, model: str) -> dict | None:
         "summary": {"n": int(len(d)), **{"price_" + k: v for k, v in quartiles(d["price"]).items()},
                     "median_miles": _n(d["mileage"].median()),
                     **{"dom_" + k: v for k, v in quartiles(d["days_listed"]).items()}},
+        **_splits(d),
         "by_year": [{"year": int(y), "n": int(len(g)), **quartiles(g["price"])} for y, g in d.groupby("year")],
         "histogram": histogram(d["price"]),
         "dom_bands": band_counts(d["days_listed"], DOM_BANDS),

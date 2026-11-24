@@ -98,6 +98,12 @@ export function Gallery({ photos, alt }) {
   );
 }
 
+export const FUEL_LABELS = { gas: "Gas", hybrid: "Hybrid", electric: "Electric", diesel: "Diesel" };
+// "AWD · Hybrid": whichever of the two the data has.
+export const driveFuel = (d) => [d.drivetrain, FUEL_LABELS[d.fuel]].filter(Boolean).join(" · ");
+export const showFees = (d) => d.fees > 0 && d.price_includes_fees !== 1;
+export const Certified = () => <span className="pill pill-cert">Certified</span>;
+
 // Days since our scraper last saw the ad live (0 = in the latest run).
 export const daysSinceSeen = (deal) =>
   deal.last_seen ? Math.max(0, Math.floor((Date.now() - new Date(`${deal.last_seen}T00:00:00Z`)) / 86400000)) : null;
@@ -121,6 +127,7 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
       <div className="card-photo">
         <Photo src={deal.photo_url} alt={name} />
         <DealPill score={deal.deal_score} />
+        {deal.is_certified === 1 && <Certified />}
       </div>
       <div className="card-body">
         <Title className="card-title">
@@ -136,7 +143,8 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
           </a>
         </Title>
         {sub && <div className="card-sub">{sub}</div>}
-        <div className="card-price num">{fmt$(deal.price)}</div>
+        {driveFuel(deal) && <div className="card-sub">{driveFuel(deal)}</div>}
+        <div className="card-price num">{fmt$(deal.price)}{showFees(deal) && <span className="card-fees"> + fees</span>}</div>
         {deal.deal_score == null ? <div className="card-value">{NOT_RATED_WHY}</div> : <>
           <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
           <div className="card-value num">Market value {fmt$(deal.predicted_price)}{deal.rating_basis && " · rough rating"}</div>
@@ -147,7 +155,6 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
           {place && <span>{place}</span>}
           <span className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>Listed {fmtN(daysOnSale(deal))} days</span>
           {deal.reduced && <span className="num">Reduced {fmt$(deal.reduced.amount)}</span>}
-          {deal.first_seen && <span className="num">Found {new Date(deal.first_seen).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
         </div>
       </div>
     </article>

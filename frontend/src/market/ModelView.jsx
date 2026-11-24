@@ -34,7 +34,8 @@ export default function ModelView({ make: makeIn, model: modelIn }) {
 }
 
 function ModelPage({ d }) {
-  const { make, model, summary: s } = d;
+  const { make, model, summary: s, by_drivetrain = [], by_color = [], certified } = d;
+  const topDrive = Math.max(...by_drivetrain.map((r) => r.median_price), 1);
   const name = `${make} ${model}`;
   const thin = s.n < MIN_CARS;
   const maxYear = d.by_year.reduce((a, b) => (b.n > a.n ? b : a), d.by_year[0]);
@@ -65,6 +66,47 @@ function ModelPage({ d }) {
           ]}
         />
       </section>
+
+      {(by_drivetrain.length >= 2 || by_color.length >= 2) && (
+        <section className="section">
+          <Fig title="What splits the price" src="own DB">
+            {by_drivetrain.length >= 2 && (
+              <>
+                <h3 className="gapped">Drivetrain</h3>
+                <Bars
+                  label={`Median asking price by drivetrain: ${by_drivetrain.map((r) => `${r.drivetrain} ${usd(r.median_price)} from ${num(r.n)} cars`).join(", ")}.`}
+                  rows={by_drivetrain.map((r) => ({ k: r.drivetrain, frac: r.median_price / topDrive, v: usd(r.median_price), small: `${num(r.n)} cars` }))}
+                />
+                <TableDisclosure head={[{ text: "Drivetrain" }, { text: "Cars" }, { text: "Median price" }]} rows={by_drivetrain.map((r) => ({ cells: [r.drivetrain, num(r.n), usd(r.median_price)] }))} />
+                <p className="note">Drivetrains with fewer than 15 cars are left out.</p>
+              </>
+            )}
+            {by_color.length >= 2 && (
+              <>
+                <h3 className="gapped">Colour</h3>
+                <div className="mix" role="img" aria-label={`Colour share: ${by_color.map((c) => `${c.color} ${Math.round(c.share * 100)}%`).join(", ")}.`}>
+                  {by_color.map((c) => <span key={c.color} style={{ flex: c.n, background: `var(--c-${c.color})`, boxShadow: "inset 0 0 0 1px var(--rule)" }} />)}
+                </div>
+                <ul className="legend">
+                  {by_color.map((c) => <li key={c.color}><i style={{ background: `var(--c-${c.color})`, boxShadow: "inset 0 0 0 1px var(--control)" }} />{c.color.charAt(0).toUpperCase() + c.color.slice(1)} <b className="num">{Math.round(c.share * 100)}%</b></li>)}
+                </ul>
+              </>
+            )}
+          </Fig>
+        </section>
+      )}
+
+      {certified && (
+        <section className="section">
+          <Fig title="Certified against not certified" src="own DB">
+            <Table
+              className="compact"
+              head={[{ text: "Group" }, { text: "Cars" }, { text: "Median price" }]}
+              rows={[["Certified", certified.certified], ["Not certified", certified.other]].map(([k, g]) => ({ cells: [k, num(g.n), usd(g.median_price)] }))}
+            />
+          </Fig>
+        </section>
+      )}
 
       {!thin && pts.length > 0 && (
         <section className="section">

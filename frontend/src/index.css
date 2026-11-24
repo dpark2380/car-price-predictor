@@ -91,7 +91,7 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .menu li svg { color: var(--accent); }
 /* Touch: every control at least 44px tall. Desktop keeps the 36-38px sizes. */
 @media (pointer: coarse) {
-  .menu li, .grade-options label, .check-option, .chip { min-height: 44px; }
+  .menu li, .check-option, .chip { min-height: 44px; }
   .field input, .select-btn { height: 44px; }
   .btn, .btn-quiet { min-height: 44px; }
   .icon-btn { width: 44px; height: 44px; }
@@ -140,6 +140,7 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .pill-good { color: var(--accent); background: var(--accent-soft); }
 .pill-fair { color: var(--muted); background: var(--active); box-shadow: inset 0 0 0 1px var(--control); } /* stays visible on the no-photo band */
 .pill-high { color: var(--pill-warning-ink); background: var(--pill-warning-bg); }
+.pill-cert { color: var(--ink); background: var(--surface); box-shadow: inset 0 0 0 1px var(--control); }
 .pill-over { color: var(--pill-negative-ink); background: var(--pill-negative-bg); }
 .pricebar { margin-top: 10px; }
 .pricebar-track { position: relative; display: grid; grid-template-columns: 35fr 30fr 35fr; gap: 2px; height: 6px; }
@@ -164,6 +165,13 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .card-photo { position: relative; aspect-ratio: 16 / 10; background: var(--active); display: grid; place-items: center; color: var(--control); }
 .card-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .card-photo .pill { position: absolute; top: 10px; left: 10px; }
+.card-photo .pill-cert { left: auto; right: 10px; }
+.card-fees { font-family: var(--font-sans); font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+.detail .pill + .pill { margin-left: 6px; }
+.detail .fees { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.dealer-sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+:root { --c-white: #f6f6f3; --c-black: #1d1d1d; --c-grey: #86868a; --c-silver: #c4c6c8; --c-blue: #3a62a6; --c-red: #b3322b; --c-green: #3e7d4f; --c-brown: #8a6a47; --c-other: repeating-linear-gradient(135deg, var(--active) 0 3px, var(--control) 3px 4px); }
+.sw { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; background: var(--sw); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 25%, transparent); vertical-align: -1px; }
 .card-photo:has(.no-photo) { aspect-ratio: 16 / 6; }
 .no-photo { display: grid; justify-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
 .no-photo svg { color: var(--control); }
@@ -215,27 +223,27 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 @keyframes pulse { 50% { opacity: 0.55; } }
 
 /* ── Listings page ──────────────────────────────────────────────────── */
-.listings-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 24px; margin-top: 28px; align-items: start; }
-.filters-panel { background: var(--surface); border-radius: var(--radius-card); padding: 18px; display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; max-height: calc(100dvh - 32px); overflow-y: auto; box-shadow: var(--shadow-card); }
-.filters-panel h2 { font-size: 17px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
-.filters-panel h2 .btn-link { font-family: var(--font-sans); font-size: 14px; }
-.grade-options { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
-.grade-options legend { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
-.grade-options label, .check-option { display: flex; gap: 10px; align-items: center; min-height: 36px; font-size: 14px; cursor: pointer; }
-.grade-options input, .check-option input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.filter-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: end; margin-top: 12px; }
+.filter-row .btns { display: flex; gap: 12px; align-items: center; }
+.more-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule); }
+.more-panel > .wide { grid-column: 1 / -1; }
+.more-panel fieldset { border: none; padding: 0; margin: 0; }
+.more-panel legend { font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+.more-panel .note { margin: 0; }
+.checks { display: flex; flex-wrap: wrap; gap: 0 24px; }
+.check-option { display: flex; gap: 10px; align-items: center; min-height: 36px; font-size: 14px; cursor: pointer; }
+.check-option input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); background: var(--active); }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.applied { margin-top: 12px; }
 .results-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .results-bar .page-title { margin: 0; }
 .results-bar h1 span { font-family: var(--font-sans); font-weight: 400; letter-spacing: 0; color: var(--muted); font-size: 15px; margin-left: 8px; }
 .results-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .results-tools .field { width: auto; }
-.filters-toggle { display: none; }
 .empty { background: var(--surface); border-radius: var(--radius-card); padding: 40px; text-align: center; color: var(--muted); box-shadow: var(--shadow-card); }
-@media (max-width: 900px) {
-  .listings-layout { grid-template-columns: 1fr; margin-top: 16px; }
-  .filters-panel { position: static; max-height: none; display: none; }
-  .filters-panel.open { display: flex; }
-  .results-tools .filters-toggle { display: inline-flex; }
-}
+@media (max-width: 900px) { .filter-row { grid-template-columns: 1fr 1fr; } .filter-row .btns { grid-column: 1 / -1; } .more-panel { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .more-panel { grid-template-columns: 1fr; } }
 
 /* ── Price check ────────────────────────────────────────────────────── */
 .pc-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
