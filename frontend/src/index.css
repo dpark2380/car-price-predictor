@@ -264,7 +264,8 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .banner { background: var(--pill-negative-bg); color: var(--pill-negative-ink); text-align: center; padding: 10px 16px; font-size: 14px; }
 
 .why p { margin: 0 0 8px; max-width: 60ch; }
-.why h3 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 16px 0 4px; }
+.why h3, .why-similar { font-size: 14px; font-weight: 600; color: var(--muted); margin: 16px 0 4px; }
+.why-similar { margin: 20px 0 12px; }
 .why-list { list-style: none; padding: 0; margin: 0; }
 .why-list li { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 10px 0; border-top: 1px solid var(--rule); font-size: 14px; }
 .why-list li > :first-child { flex: 1 1 140px; min-width: 0; font-weight: 500; }

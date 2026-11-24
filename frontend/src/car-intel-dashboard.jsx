@@ -670,7 +670,7 @@ export default function CarIntelDashboard() {
     const comps = deals
       .filter((d) => d.listing_id !== deal.listing_id && d.make === deal.make && d.model === deal.model && Math.abs(d.year - deal.year) <= 1 && d.mileage != null)
       .sort((a, b) => Math.abs(a.mileage - deal.mileage) - Math.abs(b.mileage - deal.mileage))
-      .slice(0, 5);
+      .slice(0, 4);
     // The listing's own length wins over the NHTSA one.
     const lengthRow = deal.overall_length != null ? ["Length", `${Number(deal.overall_length).toFixed(1)} in`] : null;
     const specsWithLength = !lengthRow ? specs
@@ -752,7 +752,7 @@ export default function CarIntelDashboard() {
                 </p>
               ) : (
                 k >= 1 ? (
-                  <p>Our price model has only {k} other {carName}{k > 1 ? "s" : ""} from other dealers to learn from, and this price is far from what {k === 1 ? "it suggests" : "they suggest"}. With so few to compare, we can't tell a bargain from a bad estimate.</p>
+                  <p>Our price model has only {k} other {k > 1 ? plural(carName) : carName} from other dealers to learn from, and this price is far from what {k === 1 ? "it suggests" : "they suggest"}. With so few to compare, we can't tell a bargain from a bad estimate.</p>
                 ) : (
                   <p>Our price model has no other {carName} from other dealers to learn from, so we can't say what it should cost.</p>
                 )
@@ -762,30 +762,20 @@ export default function CarIntelDashboard() {
               )}
               {rated && !deal.rating_basis && k != null && deal.cohort_median_price != null && (
                 <p>
-                  Based on {fmtN(k)} other {carName}{k === 1 ? "" : "s"} at other dealers, which typically {k === 1 ? "lists" : "list"} for {fmt$(deal.cohort_median_price)}.
+                  Based on {fmtN(k)} other {k === 1 ? carName : plural(carName)} at other dealers, which typically {k === 1 ? "lists" : "list"} for {fmt$(deal.cohort_median_price)}.
                   {k <= 2 && " That's very few, so treat the rating as rough."}
                 </p>
               )}
-              {comps.length > 0 && (
-                <>
-                  <h3>{rated ? `Similar ${deal.make} ${deal.model}s, nearest mileage first` : "Closest we have:"}</h3>
-                  <ul className="why-list">
-                    {comps.map((d) => (
-                      <li key={d.listing_id}>
-                        <a href={listingPath(d.listing_id)} onClick={(e) => {
-                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                          e.preventDefault();
-                          openListing(d);
-                        }}>{[d.year, d.trim].filter(Boolean).join(" ")}</a>
-                        <span className="num">{fmtN(d.mileage)} mi</span>
-                        <span className="num">{fmt$(d.price)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {Math.abs(milesOff) > 2000 && <p className="note">This car has about {fmtN(Math.abs(milesOff))} {milesOff < 0 ? "fewer" : "more"} miles than these.</p>}
-                </>
-              )}
             </div>
+            {comps.length > 0 && (
+              <>
+                <h3 className="why-similar">{rated ? `Similar ${plural(`${deal.make} ${deal.model}`)}, nearest mileage first` : "Closest we have"}</h3>
+                <div className="card-grid four">
+                  {comps.map((d) => <ListingCard key={d.listing_id} level={4} {...cardProps(d)} />)}
+                </div>
+                {Math.abs(milesOff) > 2000 && <p className="note">This car has about {fmtN(Math.abs(milesOff))} {milesOff < 0 ? "fewer" : "more"} miles than these.</p>}
+              </>
+            )}
           </section>
 
           {options?.options?.length > 0 && (
