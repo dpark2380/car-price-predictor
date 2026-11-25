@@ -3,7 +3,7 @@ import { fmt$, fmtN, normalizeBodyType } from "./utils/format";
 import { Select } from "./components/Select";
 import Market from "./market/Market";
 import { marketPath as marketUrl } from "./market/api";
-import { plural } from "./market/format";
+import { carName, plural } from "./market/format";
 import { BrandMark, CardSkeleton, Certified, DealPill, FUEL_LABELS, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, driveFuel, showFees, vsMarket } from "./components/ui";
 
 // Dealer colour names arrive in any case ("GRAY", "isle of man green"): title case them, small joining words lower.
@@ -19,7 +19,7 @@ const TIER_MIN_SCORE = { 3: 35, 4: 65, 5: 90 };
 const DRIVETRAINS = ["AWD", "4WD", "FWD", "RWD"];
 const COLORS = ["white", "black", "grey", "silver", "blue", "red", "green", "brown", "other"];
 const GRADE_CHOICES = [
-  { tier: 1, label: "Any price" },
+  { tier: 1, label: "Any grade" },
   { tier: 3, label: "Fair price or better" },
   { tier: 4, label: "Good deals" },
   { tier: 5, label: "Great deals only" },
@@ -172,6 +172,14 @@ export default function CarIntelDashboard() {
   const [fuelFilter, setFuelFilter] = useState(initial.fuel);
   const [colorFilter, setColorFilter] = useState(initial.color); // comma list of colour families
   const [moreOpen, setMoreOpen] = useState(false);
+  // On a phone the secondary filters move into the More filters panel, so the results start sooner.
+  const [phone, setPhone] = useState(() => window.matchMedia("(max-width: 480px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 480px)");
+    const on = () => setPhone(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
   const [count, setCount] = useState(null); // cars the filters being edited would show
   const [visibleCount, setVisibleCount] = useState(60);
 
@@ -387,8 +395,10 @@ export default function CarIntelDashboard() {
   }, [view, listingId, marketPath, applied, sortKey, sortDir, estMake, estModel, estTrim, estYear, estMileage]);
 
   useEffect(() => {
-    if (view !== "market") document.title = PAGE_TITLES[view]; // the Market pages name themselves
-  }, [view]);
+    if (view === "market") return; // the Market pages name themselves
+    const d = view === "listing" && (deals.find((x) => x.listing_id === listingId) || preview.find((x) => x.listing_id === listingId));
+    document.title = d ? `${d.year} ${carName(d.make, d.model)} for ${fmt$(d.price)} | Car Intel` : PAGE_TITLES[view];
+  }, [view, listingId, deals, preview]);
 
   // Show the view and inputs the address bar describes (Back/Forward, and links that stay in the site).
   const applyUrl = () => {
@@ -507,6 +517,22 @@ export default function CarIntelDashboard() {
         {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
       </Select>
       <button className="btn" onClick={onShow}>{showLabel}</button>
+    </>
+  );
+
+  const secondary = (
+    <>
+      <Select label="Min price" value={minPrice} onChange={setMinPrice}>
+        <option value="">Any</option>
+        {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
+      </Select>
+      <Select label="Year from" value={minYear} onChange={setMinYear}>
+        <option value="">Any</option>
+        {keep(yearOptions, minYear).map((y) => <option key={y} value={y}>{y}</option>)}
+      </Select>
+      <Select label="Price grade" value={String(minStars)} onChange={(v) => setMinStars(Number(v))}>
+        {GRADE_CHOICES.map(({ tier, label }) => <option key={tier} value={tier}>{label}</option>)}
+      </Select>
     </>
   );
 
@@ -670,7 +696,7 @@ export default function CarIntelDashboard() {
         </>
       );
     }
-    const name = `${deal.year} ${deal.make} ${deal.model}`;
+    const name = `${deal.year} ${carName(deal.make, deal.model)}`;
     const vm = vsMarket(deal.savings);
     const onSale = daysOnSale(deal);
     const atDealer = deal.dos_active != null && Math.abs(onSale - deal.dos_active) >= 7 ? deal.dos_active : null; // shown only when it differs clearly
@@ -689,7 +715,7 @@ export default function CarIntelDashboard() {
         ? specs.map((g) => (g.group !== "Dimensions & Weights" ? g : { ...g, rows: g.rows.some(([l]) => l === "Length") ? g.rows.map((r) => (r[0] === "Length" ? lengthRow : r)) : [lengthRow, ...g.rows] }))
         : [...specs, { group: "Dimensions & Weights", rows: [lengthRow] }];
     const k = deal.comparables;
-    const carName = `${deal.year} ${deal.make} ${deal.model}`;
+    const carTitle = `${deal.year} ${carName(deal.make, deal.model)}`;
     const err = deal.typical_error_pct;
     const mi = comps.map((d) => d.mileage).sort((a, b) => a - b);
     const milesOff = comps.length >= 3 ? Math.round((deal.mileage - (mi[(mi.length - 1) >> 1] + mi[mi.length >> 1]) / 2) / 1000) * 1000 : 0;
@@ -745,7 +771,7 @@ export default function CarIntelDashboard() {
               )}
               <div className="linkrow">
                 {deal.vin && <a className="btn-quiet" {...pathLink(`/car/${encodeURIComponent(deal.vin)}`)}>Price history</a>}
-                <a className="btn-quiet" {...pathLink(marketUrl(deal.make, deal.model))}>All {deal.make} {plural(deal.model)}</a>
+                <a className="btn-quiet" {...pathLink(marketUrl(deal.make, deal.model))}>All {plural(carName(deal.make, deal.model))}</a>
                 <a className="btn-quiet" {...pathLink("/market/method")}>How accurate is this?</a>
               </div>
             </section>
@@ -763,9 +789,9 @@ export default function CarIntelDashboard() {
                 </p>
               ) : (
                 k >= 1 ? (
-                  <p>Our price model has only {k} other {k > 1 ? plural(carName) : carName} from other dealers to learn from, and this price is far from what {k === 1 ? "it suggests" : "they suggest"}. With so few to compare, we can't tell a bargain from a bad estimate.</p>
+                  <p>Our price model has only {k} other {k > 1 ? plural(carTitle) : carTitle} from other dealers to learn from, and this price is far from what {k === 1 ? "it suggests" : "they suggest"}. With so few to compare, we can't tell a bargain from a bad estimate.</p>
                 ) : (
-                  <p>Our price model has no other {carName} from other dealers to learn from, so we can't say what it should cost.</p>
+                  <p>Our price model has no other {carTitle} from other dealers to learn from, so we can't say what it should cost.</p>
                 )
               )}
               {!rated && deal.market && (
@@ -773,14 +799,14 @@ export default function CarIntelDashboard() {
               )}
               {rated && !deal.rating_basis && k != null && deal.cohort_median_price != null && (
                 <p>
-                  Based on {fmtN(k)} other {k === 1 ? carName : plural(carName)} at other dealers, which typically {k === 1 ? "lists" : "list"} for {fmt$(deal.cohort_median_price)}.
+                  Based on {fmtN(k)} other {k === 1 ? carTitle : plural(carTitle)} at other dealers, which typically {k === 1 ? "lists" : "list"} for {fmt$(deal.cohort_median_price)}.
                   {k <= 2 && " That's very few, so treat the rating as rough."}
                 </p>
               )}
             </div>
             {comps.length > 0 && (
               <>
-                <h3 className="why-similar">{rated ? `Similar ${plural(`${deal.make} ${deal.model}`)}, nearest mileage first` : "Closest we have"}</h3>
+                <h3 className="why-similar">{rated ? `Similar ${plural(carName(deal.make, deal.model))}, nearest mileage first` : "Closest we have"}</h3>
                 <div className="card-grid four">
                   {comps.map((d) => <ListingCard key={d.listing_id} level={4} {...cardProps(d)} />)}
                 </div>
@@ -837,7 +863,7 @@ export default function CarIntelDashboard() {
     const matches = estResult
       ? deals.filter((d) => d.make?.toLowerCase() === u.make && d.model?.toLowerCase() === u.model && String(d.year) === String(u.year)).length
       : 0;
-    const carName = `${u.year} ${label(u.make)} ${label(u.model)}`;
+    const carTitle = `${u.year} ${carName(label(u.make), label(u.model))}`;
     return (
       <>
         {header}
@@ -883,7 +909,7 @@ export default function CarIntelDashboard() {
                 {stale && <p className="note" style={{ margin: "0 0 10px" }}>Press Check price to update.</p>}
                 <div style={stale ? { opacity: 0.5 } : undefined}>
                   <h2 id="pc-result-title" className="label">
-                    Typical asking price for a {carName}{u.trim ? ` ${u.trim}` : ""} with {fmtN(Number(u.mileage))} miles
+                    Typical asking price for a {carTitle}{u.trim ? ` ${u.trim}` : ""} with {fmtN(Number(u.mileage))} miles
                   </h2>
                   <div className="value num">{fmt$(estResult.predicted_price)}</div>
                   {estResult.range_low != null && (
@@ -909,7 +935,7 @@ export default function CarIntelDashboard() {
                       style={{ marginTop: 18 }}
                       onClick={() => showListings(() => { setMakeFilter(u.make); setModelFilter(u.model); setMinYear(String(u.year)); setMaxYear(String(u.year)); })}
                     >
-                      See {fmtN(matches)} {carName} {matches === 1 ? "listing" : "listings"}
+                      See {fmtN(matches)} {carTitle} {matches === 1 ? "listing" : "listings"}
                     </button>
                   )}
                 </div>
@@ -936,7 +962,7 @@ export default function CarIntelDashboard() {
   const cards = sortedDeals.slice(0, visibleCount);
   const clearAll = () => { resetFilters(); setCommit((c) => c + 1); };
   const removeChip = (fn) => () => { fn(); setCommit((c) => c + 1); };
-  const appliedMore = chips.length;
+  const appliedMore = chips.length + (phone ? [minPrice, minYear, minStars > 1].filter(Boolean).length : 0);
   return (
     <>
       {header}
@@ -944,17 +970,7 @@ export default function CarIntelDashboard() {
         <section className="search-panel" aria-label="Filters" style={{ marginTop: 28 }}>
           <div className="search-grid">{primaryRow(() => setCommit((c) => c + 1))}</div>
           <div className="filter-row">
-            <Select label="Min price" value={minPrice} onChange={setMinPrice}>
-              <option value="">Any</option>
-              {PRICE_STEPS.map((p) => <option key={p} value={p}>{fmt$(p)}</option>)}
-            </Select>
-            <Select label="Year from" value={minYear} onChange={setMinYear}>
-              <option value="">Any</option>
-              {keep(yearOptions, minYear).map((y) => <option key={y} value={y}>{y}</option>)}
-            </Select>
-            <Select label="Price grade" value={String(minStars)} onChange={(v) => setMinStars(Number(v))}>
-              {GRADE_CHOICES.map(({ tier, label }) => <option key={tier} value={tier}>{label}</option>)}
-            </Select>
+            {!phone && secondary}
             <div className="btns">
               <button className="btn-quiet" aria-expanded={moreOpen} aria-controls="more-filters" onClick={() => setMoreOpen((o) => !o)}>
                 More filters{appliedMore ? ` · ${appliedMore}` : ""}
@@ -964,6 +980,7 @@ export default function CarIntelDashboard() {
           </div>
           {moreOpen && (
             <div className="more-panel" id="more-filters">
+              {phone && secondary}
               <Select label="Drivetrain" value={driveFilter} onChange={setDriveFilter}>
                 <option value="">Any drivetrain</option>
                 {DRIVETRAINS.map((d) => <option key={d} value={d.toLowerCase()}>{d}</option>)}

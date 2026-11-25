@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { marketPath, seg, useApi } from "./api";
 import { Bars, GradeMix, Histogram, MonthlyMedians, Scatter, Table, TableDisclosure, YearRange } from "./charts";
-import { GRADES, MON, num, plural, usd } from "./format";
+import { GRADES, MON, carName, num, plural, usd } from "./format";
 import { Crumbs, ErrorBox, Fig, KeyFacts, Link, Skeleton } from "./parts";
 
 // Distribution charts need enough cars to mean something; below this only the figures are shown.
@@ -25,7 +25,7 @@ function Figure({ thin, chart, head, rows }) {
 export default function ModelView({ make: makeIn, model: modelIn }) {
   const { data: d, error, reload } = useApi(`/market/model/${seg(makeIn)}/${modelIn.split("/").map(seg).join("/")}`);
   useEffect(() => {
-    document.title = d ? `${d.make} ${d.model} prices | Car Intel` : "Model | Car Intel";
+    document.title = d ? `${carName(d.make, d.model)} prices | Car Intel` : "Model | Car Intel";
   }, [d]);
   if (error) return <ErrorBox error={error} onRetry={reload} notFound={`We have no listings for ${makeIn} ${modelIn}.`} back={{ to: "/market", text: "See all brands" }} />;
   if (!d) return <Skeleton label="Loading the model" />;
@@ -35,7 +35,7 @@ export default function ModelView({ make: makeIn, model: modelIn }) {
 function ModelPage({ d }) {
   const { make, model, summary: s, by_drivetrain = [], by_color = [], certified } = d;
   const topDrive = Math.max(...by_drivetrain.map((r) => r.median_price), 1);
-  const name = `${make} ${model}`;
+  const name = carName(make, model);
   const thin = s.n < MIN_CARS;
   const maxYear = d.by_year.reduce((a, b) => (b.n > a.n ? b : a), d.by_year[0]);
   const chartYears = d.by_year.filter((y) => y.year >= 2010);

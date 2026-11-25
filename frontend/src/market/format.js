@@ -9,6 +9,8 @@ export const dayMonth = (t) => { const d = new Date(t); return `${d.getUTCDate()
 export const dayMonthYear = (t) => `${dayMonth(t)} ${new Date(t).getUTCFullYear()}`;
 export const monthYear = (t) => { const d = new Date(t); return `${MON[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
 export const lin = (a, b, c, d) => (v) => (b === a ? (c + d) / 2 : c + ((v - a) / (b - a)) * (d - c));
+// "Ram" + "Ram 1500" is "Ram 1500", not "Ram Ram 1500".
+export const carName = (make, model) => (String(model).toLowerCase().startsWith(String(make).toLowerCase()) ? `${make}${String(model).slice(String(make).length)}` : `${make} ${model}`);
 export const plural = (name) => (/s$/i.test(name) ? name : `${name}s`);
 
 // Axis ticks on round values: about n of them covering lo..hi.

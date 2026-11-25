@@ -172,7 +172,7 @@ button:active:not(:disabled) { scale: 0.97; transition-duration: 0s; }
 .detail .fees { font-size: 14px; color: var(--muted); margin-top: 2px; }
 .dealer-sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
 :root { --c-white: #f6f6f3; --c-black: #1d1d1d; --c-grey: #86868a; --c-silver: #c4c6c8; --c-blue: #3a62a6; --c-red: #b3322b; --c-green: #3e7d4f; --c-brown: #8a6a47; --c-other: repeating-linear-gradient(135deg, var(--active) 0 3px, var(--control) 3px 4px); }
-.sw { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; background: var(--sw); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 25%, transparent); vertical-align: -1px; }
+.sw { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; background: var(--sw); box-shadow: inset 0 0 0 1px var(--control); vertical-align: -1px; }
 .card-photo:has(.no-photo) { aspect-ratio: 16 / 6; }
 .no-photo { display: grid; justify-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
 .no-photo svg { color: var(--control); }

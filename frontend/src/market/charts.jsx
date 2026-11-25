@@ -222,7 +222,9 @@ export function DotStrip({ prices, median, p25, p75, mine, band, label }) {
         const { step } = niceTicks(lo, hi, 5);
         const dlo = Math.max(0, Math.floor(lo / (step / 2)) * (step / 2)), dhi = Math.ceil(hi / (step / 2)) * (step / 2);
         const x = lin(dlo, dhi, f.x0, f.x1);
-        const { ticks } = niceTicks(dlo, dhi, Math.max(2, Math.floor(f.W / 110)));
+        // niceTicks rounds its last tick up past dhi: keep only ticks inside the axis, and at least two.
+        const inRange = niceTicks(dlo, dhi, Math.max(4, Math.floor(f.W / 110))).ticks.filter((t) => t >= dlo && t <= dhi);
+        const ticks = inRange.length >= 2 ? inRange : [dlo, dhi];
         const colW = 8, cols = new Map();
         prices.forEach((p) => {
           const cx = Math.round(x(p) / colW) * colW;

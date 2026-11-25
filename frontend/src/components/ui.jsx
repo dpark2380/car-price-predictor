@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { dealTier, dealTierLabel } from "../utils/scoreColor";
+import { carName } from "../market/format";
 import { fmt$, fmtN, normalizeBodyType } from "../utils/format";
 
 const PILL_CLASS = ["pill-over", "pill-high", "pill-fair", "pill-good", "pill-great"];
@@ -120,7 +121,7 @@ export const STALE_DAYS = 90;
 // level: the heading level of the title, one below the section it sits in.
 export function ListingCard({ deal, href, onOpen, level = 3 }) {
   const Title = `h${level}`;
-  const name = `${deal.year} ${deal.make} ${deal.model}`;
+  const name = `${deal.year} ${carName(deal.make, deal.model)}`;
   const vm = vsMarket(deal.savings);
   const sub = [deal.trim, normalizeBodyType(deal.body_type)].filter((v) => v && v !== "Unknown").join(", ");
   const place = [deal.location_city, deal.location_state].filter(Boolean).join(", ");

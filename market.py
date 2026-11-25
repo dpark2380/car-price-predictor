@@ -3,6 +3,8 @@ market.py — read-only aggregates for the Market pages (api.py /api/market/*, /
 Every figure counts a car once: the latest active row per VIN, at or above the price floor, with its
 prediction. Pure functions of that frame, so tests need no database.
 """
+import re
+
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
@@ -30,6 +32,25 @@ _SQL = text("""
 """)
 
 
+# Makes the feed sends in capitals that really are written that way; every other all-caps make is title-cased for display.
+_CAPS_MAKES = {"BMW", "GMC", "MINI", "INEOS", "RAM", "INFINITI", "FIAT"}  # official brand styling
+_MAKE_NAMES = {"Am General": "AM General"}
+
+
+def show_make(make):
+    make = _MAKE_NAMES.get(make, make)
+    return make.title() if isinstance(make, str) and make.isupper() and make not in _CAPS_MAKES else make
+
+
+def show_dealer(name):
+    """Dealer names for display: all-caps names are title-cased and company suffixes are capitals ("Car Shine Auto Sales LLC")."""
+    if not isinstance(name, str):
+        return name
+    if name.isupper():
+        name = name.title()
+    return re.sub(r"\b(llc|inc|llp|lp)\b", lambda m: m.group(1).upper(), name, flags=re.I)
+
+
 def latest_per_vin(df: pd.DataFrame) -> pd.DataFrame:
     """One row per car: the newest by last_seen (ties: newest id). A row without a VIN is its own car.
     Rows were not being marked inactive when a dealer's cut re-listed a VIN, so active rows hold duplicates."""
@@ -44,6 +65,7 @@ def load_cars(session) -> pd.DataFrame:
     df["gap_pct"] = (df["predicted_price"] - df["price"]) / df["predicted_price"] * 100   # + = listed below the estimate
     df["color_family"] = [color_family(b, t) for b, t in zip(df["base_ext_color"], df["exterior_color"])]
     df["make_l"], df["model_l"] = df["make"].str.lower(), df["model"].str.lower()
+    df["make"], df["dealer_name"] = df["make"].map(show_make), df["dealer_name"].map(show_dealer)
     return df
 
 

@@ -58,6 +58,7 @@ function Method({ card, live }) {
   const groups = [...card.importance.groups].sort((a, b) => b.relative - a.relative);
   const seg = card.segment_errors;
   const cols = seg[0]?.cells || [];
+  const cheapTop = cols[cols.length - 1], cheapPrev = cols[cols.length - 2];
   const reasons = [
     ["No comparables at other dealers", live.not_rated.no_comparables],
     ["1 or 2 comparables and a top or bottom score", live.not_rated.thin_extreme_score],
@@ -149,7 +150,7 @@ score  = 50 + 40 × 1.5 / 3 = 70.0
                 </tbody>
               </table>
             </div>
-            <p className="note">Median absolute error as a share of the asking price.</p>
+            <p className="note">Median absolute error as a share of the asking price.{cheapTop && cheapTop.error_pct > cheapPrev.error_pct && ` Cars under ${usd(seg[0].hi)} vary more in condition than the data records, so more comparables help less there. The cell with ${cheapTop.comparables_lo} or more comparables rests on ${num(cheapTop.n)} cars.`}</p>
           </Fig>
           <div className="stack">
             <Fig title="Test error by model" src={`training log, ${num(test.n)} held-out rows`}>

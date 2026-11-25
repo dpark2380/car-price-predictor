@@ -221,7 +221,7 @@ def _deal_records(version):
             "vin":             ss(row.get("vin")),
             "photo_url":       ss(row.get("photo_url")),
             "year":            si(row.get("year")),
-            "make":            row.get("make"),
+            "make":            market.show_make(row.get("make")),
             "model":           row.get("model"),
             "trim":            ss(row.get("trim")),
             "body_type":       ss(row.get("body_type")),
@@ -240,7 +240,7 @@ def _deal_records(version):
             "location_city":   row.get("location_city"),
             "condition":       row.get("condition"),
             "days_listed":     si(row.get("days_listed")) or 0,
-            "dealer_name":     ss(row.get("dealer_name")),
+            "dealer_name":     market.show_dealer(ss(row.get("dealer_name"))),
             "dealer_phone":    ss(row.get("dealer_phone")),
             "dealer_street":   ss(row.get("dealer_street")),
             "dealer_type":     ss(row.get("dealer_type")),
@@ -534,8 +534,8 @@ def car(vin):
         rated = p.deal_score is not None
         return jsonify({
             "vin": vin, "listing_id": c.listing_id, "url": c.url, "photo_url": ss(c.photo_url),
-            "year": c.year, "make": c.make, "model": c.model, "trim": ss(c.trim),
-            "price": sf(c.price), "mileage": si(c.mileage), "dealer_name": ss(c.dealer_name),
+            "year": c.year, "make": market.show_make(c.make), "model": c.model, "trim": ss(c.trim),
+            "price": sf(c.price), "mileage": si(c.mileage), "dealer_name": market.show_dealer(ss(c.dealer_name)),
             "dealer_type": ss(c.dealer_type), "drivetrain": ss(c.drivetrain), "fuel_type": ss(c.fuel_type),
             "fuel": market.fuel_family(ss(c.fuel_type), ss(c.powertrain_type)),
             "exterior_color": ss(c.exterior_color), "base_ext_color": ss(c.base_ext_color),
@@ -597,7 +597,7 @@ def popular():
             records.append({
                 "rank":            si(row.get("popularity_rank")),
                 "year":            si(row.get("year")),
-                "make":            row.get("make"),
+                "make":            market.show_make(row.get("make")),
                 "model":           row.get("model"),
                 "active_listings": si(row.get("active_listings")),
                 "avg_price":       sf(row.get("avg_price")),
@@ -707,7 +707,7 @@ def listings():
             score = sf(row.get("deal_score"))
             records.append({
                 "year":            si(row.get("year")),
-                "make":            row.get("make"),
+                "make":            market.show_make(row.get("make")),
                 "model":           row.get("model"),
                 "price":           sf(row.get("price")),
                 "mileage":         si(row.get("mileage")),

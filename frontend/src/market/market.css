@@ -40,7 +40,7 @@ h3.mini { font-size: 14px; font-weight: 600; }
 .legend .great { background: var(--accent); }
 .legend .good { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
 .legend .fair { background: var(--control); }
-.legend .high { background: color-mix(in srgb, var(--pill-warning-ink) 55%, var(--surface)); }
+.legend .high { background: var(--pill-warning-ink); }
 .legend .over { background: var(--negative); }
 .legend .nr { background: repeating-linear-gradient(135deg, var(--active) 0 3px, var(--control) 3px 4px); }
 .legend .dotk, .legend .medk { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
@@ -109,6 +109,12 @@ h3.mini { font-size: 14px; font-weight: 600; }
 .market tr.me th { box-shadow: -8px 0 0 var(--accent-soft); }
 .market tr.me td:last-child { box-shadow: 8px 0 0 var(--accent-soft); }
 .rangecell { min-width: 150px; }
+@media (max-width: 600px) {
+  .market .hide-sm { display: none; }
+  .market thead th { min-width: 0; }
+  .market th, .market td { padding-inline: 6px; }
+  .market tbody th { white-space: normal; }
+}
 .rng { position: relative; height: 6px; border-radius: 999px; background: var(--active); }
 .rng i { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
 .rng b { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
@@ -123,7 +129,7 @@ h3.mini { font-size: 14px; font-weight: 600; }
 .mix span { min-width: 3px; }
 .mix .nr { background: repeating-linear-gradient(135deg, var(--active) 0 4px, var(--control) 4px 5px); }
 .mix .over { background: var(--negative); }
-.mix .high { background: color-mix(in srgb, var(--pill-warning-ink) 55%, var(--surface)); }
+.mix .high { background: var(--pill-warning-ink); }
 .mix .fair { background: var(--control); }
 .mix .good { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
 .mix .great { background: var(--accent); }

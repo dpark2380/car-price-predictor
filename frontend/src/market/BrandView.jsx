@@ -55,7 +55,6 @@ export function BrandIndex() {
 
 export function BrandView({ make: makeIn }) {
   const { data: d, error, reload } = useApi(`/market/make/${seg(makeIn)}`);
-  const { data: makes } = useApi("/market/makes");
   useEffect(() => { document.title = d ? `${d.make} used car prices | Car Intel` : "Brand | Car Intel"; }, [d]);
   if (error) return <ErrorBox error={error} onRetry={reload} notFound={`We have no listings for ${makeIn}.`} back={{ to: "/market", text: "See all brands" }} />;
   if (!d) return <Skeleton label="Loading the brand" />;
@@ -67,11 +66,6 @@ export function BrandView({ make: makeIn }) {
   const top = d.models[0];
   const scaleMax = Math.max(10000, Math.ceil(Math.max(...models.map((m) => m.p75)) / 10000) * 10000);
   const monthly = d.monthly.filter((m) => m.months.filter((x) => x.n >= 5).length >= 2);
-  let brands = makes ? makes.filter((m) => m.n >= BRAND_MIN).slice(0, 10) : [];
-  if (makes && !brands.some((m) => m.make === make)) {
-    const cur = makes.find((m) => m.make === make);
-    if (cur) brands = [...brands, cur];
-  }
   const mon = (m) => `${MON[Number(m.month.slice(5)) - 1]} ${m.month.slice(0, 4)}`;
 
   return (
@@ -109,8 +103,8 @@ export function BrandView({ make: makeIn }) {
               <thead>
                 <tr>
                   <th scope="col">Model</th><th scope="col">Cars</th><th scope="col">Median price</th>
-                  <th scope="col" className="rangecell l">Middle half, $0 to {kusd(scaleMax)}</th>
-                  <th scope="col">{gapHead.text}</th><th scope="col">Days on market</th><th scope="col">Usual error</th><th scope="col">Not rated</th>
+                  <th scope="col" className="rangecell hide-sm l">Middle half, $0 to {kusd(scaleMax)}</th>
+                  <th scope="col">{gapHead.text}</th><th scope="col" className="hide-sm">Days on market</th><th scope="col" className="hide-sm">Usual error</th><th scope="col" className="hide-sm">Not rated</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,20 +112,20 @@ export function BrandView({ make: makeIn }) {
                   <tr key={m.model}>
                     <th scope="row"><Link to={marketPath(make, m.model)}>{m.model}</Link></th>
                     <td>{num(m.n)}</td><td>{usd(m.p50)}</td>
-                    <td className="rangecell l">
+                    <td className="rangecell hide-sm l">
                       <div className="rng" role="img" aria-label={`${usd(m.p25)} to ${usd(m.p75)}`}>
                         <i style={{ left: `${(m.p25 / scaleMax) * 100}%`, width: `${((m.p75 - m.p25) / scaleMax) * 100}%` }} />
                         <b style={{ left: `${(m.p50 / scaleMax) * 100}%` }} />
                       </div>
                     </td>
-                    <td>{signedPct(m.median_gap_pct)}</td><td>{num(m.median_dom)}</td>
-                    <td>{m.usual_error_pct != null ? `${m.usual_error_pct.toFixed(1)}%` : "—"}</td><td>{num(m.unrated)}</td>
+                    <td>{signedPct(m.median_gap_pct)}</td><td className="hide-sm">{num(m.median_dom)}</td>
+                    <td className="hide-sm">{m.usual_error_pct != null ? `${m.usual_error_pct.toFixed(1)}%` : "—"}</td><td className="hide-sm">{num(m.unrated)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="note">Gap is the median asking price against the model estimate. A minus means listed above it.</p>
+          <p className="note">Gap is the median asking price against the model estimate. A minus sign means the asking price is above the estimate, and a plus sign means it is below.</p>
         </div>
       </Section>
 
@@ -154,12 +148,6 @@ export function BrandView({ make: makeIn }) {
               rows={monthly.flatMap((m) => m.months.map((x) => ({ cells: [m.model, mon(x), num(x.n), usd(x.p50)] })))}
             />
           </div>
-        </Section>
-      )}
-
-      {brands.length > 1 && makes && (
-        <Section id="br-h3" title="Brands" src={`own DB, top ${Math.min(10, brands.length)} of ${makes.length}`}>
-          <div className="panel"><BrandsTable rows={brands} current={make} /></div>
         </Section>
       )}
     </>

@@ -3,7 +3,7 @@ import { DealPill, daysOnSale } from "../components/ui";
 import { fmtN } from "../utils/format";
 import { getJson, marketPath, useApi } from "./api";
 import { DotStrip, MilesChart, RangeBar, StepChart, Table, TableDisclosure } from "./charts";
-import { day, dayMonth, dayMonthYear, kusd, num, plural, signedPct, usd } from "./format";
+import { carName, day, dayMonth, dayMonthYear, kusd, num, plural, signedPct, usd } from "./format";
 import { Crumbs, ErrorBox, KeyFacts, Section, Skeleton, Src } from "./parts";
 
 const SOURCE = { scrape: "nightly scrape", ref: "dealer's earlier price", marketcheck: "MarketCheck" };
@@ -11,7 +11,7 @@ const SOURCE = { scrape: "nightly scrape", ref: "dealer's earlier price", market
 export default function CarView({ vin }) {
   const { data: car, error, reload } = useApi(`/car/${encodeURIComponent(vin)}`);
   useEffect(() => {
-    document.title = car ? `${car.year} ${car.make} ${car.model} price history | Car Intel` : "Car | Car Intel";
+    document.title = car ? `${car.year} ${carName(car.make, car.model)} price history | Car Intel` : "Car | Car Intel";
   }, [car]);
   if (error) return <ErrorBox error={error} onRetry={reload} notFound={error.status === 404 || error.status === 400 ? "We have no current listing for this VIN." : null} back={{ to: "/market", text: "See the market" }} />;
   if (!car) return <Skeleton label="Loading the car" />;
@@ -32,7 +32,7 @@ function CarPage({ car, reload }) {
     }
   };
 
-  const name = `${car.year} ${car.make} ${car.model}`;
+  const name = `${car.year} ${carName(car.make, car.model)}`;
   const rated = car.deal_score != null;
   const national = car.rating_basis === "national";
   const points = car.history.map((h) => ({ t: day(h.date), price: h.price, miles: h.miles, seller: h.seller, source: h.source }));
@@ -126,7 +126,7 @@ function CarPage({ car, reload }) {
             ) : (
               <>
                 <button type="button" className="btn-quiet" onClick={loadFull} disabled={full === "loading"}>{full === "loading" ? "Loading…" : "Load full history"}</button>
-                <span>Earlier listings from MarketCheck. Fetched once, then stored.</span>
+                <span>Looks up this car's earlier listings across the US. It can take a few seconds.</span>
                 {full === "error" && <span className="alert" role="alert">Couldn't load full history. Try again.</span>}
               </>
             )}
