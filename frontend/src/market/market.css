@@ -58,7 +58,7 @@ h3.mini { font-size: 14px; font-weight: 600; }
 @media (max-width: 480px) { .four { grid-template-columns: 1fr; } }
 .stack { display: grid; gap: 20px; }
 .two > *, .four > *, .stack > * { min-width: 0; }
-.fig h3 { font-size: 15px; font-weight: 600; line-height: 1.3; }
+.fig h3, .fig-head h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.3; }
 .fig-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
 .fig .sub { font-size: 13px; color: var(--muted); margin-top: 2px; max-width: 75ch; }
 .src { font-family: var(--font-mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; white-space: nowrap; }

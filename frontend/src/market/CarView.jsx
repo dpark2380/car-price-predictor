@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { DealPill } from "../components/ui";
+import { DealPill, daysOnSale } from "../components/ui";
 import { fmtN } from "../utils/format";
 import { getJson, marketPath, useApi } from "./api";
 import { DotStrip, MilesChart, RangeBar, StepChart, Table, TableDisclosure } from "./charts";
@@ -44,7 +44,8 @@ function CarPage({ car, reload }) {
   const diff = !one ? car.price - first.price : null;
   const milesDiff = !one && first.miles != null && last.miles != null ? last.miles - first.miles : null;
   const since = last ? dayMonth(last.t) : car.first_seen ? dayMonth(day(car.first_seen)) : null;
-  const dom = car.days_on_market ?? car.days_in_listing;
+  const dom = car.days_on_market != null ? daysOnSale({ days_listed: car.days_on_market, last_seen: car.last_seen }) : null; // same count as the listing page
+  const atDealer = car.dos_active != null && dom != null && Math.abs(dom - car.dos_active) >= 7 ? car.dos_active : null;
   const m = car.market;
   const hasMiles = new Set(points.filter((p) => p.miles != null).map((p) => p.miles)).size > 1;
   const sources = [...new Set(points.map((p) => p.source))];
@@ -65,7 +66,7 @@ function CarPage({ car, reload }) {
       cls: diff < 0 ? "down" : "",
       s: `${signedPct((diff / first.price) * 100)} since ${dayMonth(first.t)}${milesDiff ? `, ${milesDiff > 0 ? "+" : "−"}${num(Math.abs(milesDiff))} mi` : ""}`,
     },
-    dom != null && { k: "On the market", v: `${num(dom)} days`, s: car.days_in_listing != null && car.days_in_listing !== dom ? `${num(car.days_in_listing)} in this listing` : null },
+    dom != null && { k: "On the market", v: `${num(dom)} days`, s: atDealer != null ? `${num(atDealer)} at this dealer` : null },
   ];
   // Four tiles at most: drop the last when a rated, unrated and market combination gives five.
   const tiles = facts.filter(Boolean).slice(0, 4);
@@ -149,10 +150,10 @@ function CarPage({ car, reload }) {
             <TableDisclosure
               head={[{ text: "Figure" }, { text: "Asking price" }]}
               rows={[
-                { cells: ["Cars listed", num(nCoh)] },
+                { cells: ["Cars we hold, this one included", num(nCoh)] },
                 { cells: ["Lowest", usd(stripSorted[0])] },
                 { cells: ["Middle half, low", usd(cohort.p25)] },
-                { cells: ["Median", usd(cohort.p50)] },
+                { cells: ["Median asking price", usd(cohort.p50)] },
                 { cells: ["Middle half, high", usd(cohort.p75)] },
                 { cells: ["Highest", usd(stripSorted[stripSorted.length - 1])] },
                 { cells: ["This car", usd(car.price)] },

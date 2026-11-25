@@ -26,19 +26,21 @@ export function vsMarket(savings) {
  * middle third (scores 35–65) is the "fair" band and the marker runs from
  * well below market (left) to well above (right).
  */
-export function PriceBar({ score }) {
+export function PriceBar({ score, captions = true }) {
   if (score == null) return null;
   const pos = Math.min(98, Math.max(2, 50 - (score - 50)));
   return (
-    <div className="pricebar" aria-hidden="true">
+    <div className="pricebar" {...(captions ? { "aria-hidden": "true" } : { role: "img", "aria-label": `Grade ${Math.round(score)} of 100, from well below market to well above` })}>
       <div className="pricebar-track">
         <span /><span /><span />
         <span className="pricebar-mark" style={{ left: `${pos}%` }} />
       </div>
-      <div className="pricebar-legend">
-        <span>Below market</span>
-        <span>Above market</span>
-      </div>
+      {captions && (
+        <div className="pricebar-legend">
+          <span>Below market</span>
+          <span>Above market</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -148,7 +150,7 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
         {deal.deal_score == null ? <div className="card-value">{NOT_RATED_WHY}</div> : <>
           <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
           <div className="card-value num">Market value {fmt$(deal.predicted_price)}{deal.rating_basis && " · rough rating"}</div>
-          <PriceBar score={deal.deal_score} />
+          <PriceBar score={deal.deal_score} captions={false} />
         </>}
         <div className="card-specs">
           <span className="num">{fmtN(deal.mileage)} mi</span>

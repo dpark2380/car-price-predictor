@@ -190,6 +190,7 @@ export default function CarIntelDashboard() {
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState({ deals: true, stats: true });
   const [apiError, setApiError] = useState(false);
+  const [medianErr, setMedianErr] = useState(null); // the model card's median error, percent
 
   const isEst = initial.view === "estimator";
   const [estMake, setEstMake] = useState(isEst ? initial.make : "");
@@ -222,6 +223,7 @@ export default function CarIntelDashboard() {
       .catch(() => {});
     load("deals", `${API}/deals?min_score=0`, (rows) => setDeals(clean(rows)));
     load("stats", `${API}/stats`, setStats);
+    fetch(`${API}/model-card`).then((r) => (r.ok ? r.json() : null)).then((d) => setMedianErr(d?.card?.test?.median_ape ?? null)).catch(() => {});
   }, []);
 
   // Entering the listings, or pressing Show, applies the filters being edited.
@@ -232,7 +234,7 @@ export default function CarIntelDashboard() {
 
   // The list: filtered by the API; Featured is its seeded shuffle, the other sorts happen below.
   const featured = sortKey === "featured";
-  const featuredQuery = featured ? `sort=featured&seed=${SEED}` : ""; // Featured shows only graded cars with a photo, so the count must ask for it too
+  const featuredQuery = featured ? `sort=featured&seed=${SEED}` : "";
   useEffect(() => {
     if (view !== "results") return undefined;
     const ctl = new AbortController();
@@ -245,7 +247,7 @@ export default function CarIntelDashboard() {
   }, [view, applied, featuredQuery]);
 
   // How many cars the filters being edited would show, asked a moment after the last change.
-  const pendingQuery = [apiQuery(pending), featuredQuery].filter(Boolean).join("&");
+  const pendingQuery = apiQuery(pending);
   useEffect(() => {
     if (view !== "results" && view !== "home") return undefined;
     const ctl = new AbortController();
@@ -436,7 +438,7 @@ export default function CarIntelDashboard() {
       const data = await res.json().catch(() => ({}));
       // The API's 400 messages are written for people ("year must be between …").
       if (!res.ok || data.error) throw new Error(res.status === 400 && data.error ? data.error : "The estimate isn't available right now. Try again in a minute.");
-      setEstResult(data);
+      setEstResult({ ...data, used: { make: estMake, model: estModel, year: estYear, mileage: estMileage, trim: estTrim } }); // the inputs this result is for
     } catch (e) {
       setEstError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : e.message);
     } finally {
@@ -478,8 +480,8 @@ export default function CarIntelDashboard() {
   };
   const cardProps = (d) => ({ deal: d, href: listingPath(d.listing_id), onOpen: openListing });
 
-  const showListings = (apply) => {
-    resetFilters();
+  const showListings = (apply, keepPending) => {
+    if (!keepPending) resetFilters();
     apply?.();
     setView("results");
   };
@@ -528,7 +530,8 @@ export default function CarIntelDashboard() {
           <nav className="nav" aria-label="Main">
             <NavLink to="results">Listings</NavLink>
             <NavLink to="estimator">Price check</NavLink>
-            <NavLink to="market" onNavigate={() => goPath("/market")}>Market</NavLink>
+            <NavLink to="market" onNavigate={() => goPath("/market")} aria-current={view === "market" && marketPath !== "/market/method" ? "page" : undefined}>Market</NavLink>
+            <a {...pathLink("/market/method")} aria-current={view === "market" && marketPath === "/market/method" ? "page" : undefined}>Method</a>
           </nav>
           <ThemeToggle />
         </div>
@@ -566,14 +569,19 @@ export default function CarIntelDashboard() {
       <>
         {header}
         <main className="wrap" id="main" tabIndex={-1}>
-          <h1 id="search-title" className="page-title">Search {total ? fmtN(total) : ""} used cars, each graded on price</h1>
+          <h1 id="search-title" className="page-title">Search {total ? fmtN(total) : ""} used cars</h1>
+          {medianErr != null && (
+            <p className="note" style={{ marginTop: -8, marginBottom: 20 }}>
+              Grades come from a price model whose estimates are typically within {medianErr.toFixed(1)}% of the asking price. <a {...pathLink("/market/method")}>How the model works</a>
+            </p>
+          )}
           <section className="search-panel" aria-labelledby="search-title">
             <div className="search-grid">{primaryRow(() => setView("results"))}</div>
             <div className="quick-links">
-              <button className="chip" onClick={() => showListings(() => setMinStars(4))}>Good deals</button>
-              <button className="chip" onClick={() => showListings(() => setMaxPrice("15000"))}>Under $15,000</button>
-              <button className="chip" onClick={() => showListings(() => setMaxMileage("50000"))}>Under 50,000 miles</button>
-              <button className="chip" onClick={() => showListings(() => setMinYear(String(new Date().getFullYear() - 3)))}>3 years old or newer</button>
+              <button className="chip" onClick={() => showListings(() => setMinStars(4), true)}>Good deals</button>
+              <button className="chip" onClick={() => showListings(() => setMaxPrice("15000"), true)}>Under $15,000</button>
+              <button className="chip" onClick={() => showListings(() => setMaxMileage("50000"), true)}>Under 50,000 miles</button>
+              <button className="chip" onClick={() => showListings(() => setMinYear(String(new Date().getFullYear() - 3)), true)}>3 years old or newer</button>
             </div>
           </section>
 
@@ -751,7 +759,7 @@ export default function CarIntelDashboard() {
               ) : rated ? (
                 <p>
                   Estimated at {fmt$(deal.predicted_price)}.
-                  {err != null && ` For cars like this the estimate is usually within ${Math.round(err)}% (so ${fmt$(Math.round(deal.predicted_price * (1 - err / 100) / 100) * 100)} to ${fmt$(Math.round(deal.predicted_price * (1 + err / 100) / 100) * 100)}).`}
+                  {err != null && ` For cars like this the estimate is usually within ${err.toFixed(1)}% (so ${fmt$(Math.round(deal.predicted_price * (1 - err / 100) / 100) * 100)} to ${fmt$(Math.round(deal.predicted_price * (1 + err / 100) / 100) * 100)}).`}
                 </p>
               ) : (
                 k >= 1 ? (
@@ -824,10 +832,12 @@ export default function CarIntelDashboard() {
   // ── PRICE CHECK ─────────────────────────────────────────────────────────────
   if (view === "estimator") {
     const maxYearInput = new Date().getFullYear() + 1;
+    const u = estResult?.used || {};
+    const stale = estResult && (u.year !== estYear || u.mileage !== estMileage || u.trim !== estTrim);
     const matches = estResult
-      ? deals.filter((d) => d.make?.toLowerCase() === estMake && d.model?.toLowerCase() === estModel && String(d.year) === String(estYear)).length
+      ? deals.filter((d) => d.make?.toLowerCase() === u.make && d.model?.toLowerCase() === u.model && String(d.year) === String(u.year)).length
       : 0;
-    const carName = `${estYear} ${label(estMake)} ${label(estModel)}`;
+    const carName = `${u.year} ${label(u.make)} ${label(u.model)}`;
     return (
       <>
         {header}
@@ -870,8 +880,10 @@ export default function CarIntelDashboard() {
             <section className="panel pc-result" aria-live="polite" aria-labelledby="pc-result-title">
               {estResult ? (
                 <>
+                {stale && <p className="note" style={{ margin: "0 0 10px" }}>Press Check price to update.</p>}
+                <div style={stale ? { opacity: 0.5 } : undefined}>
                   <h2 id="pc-result-title" className="label">
-                    Typical asking price for a {carName}{estTrim ? ` ${estTrim}` : ""} with {fmtN(Number(estMileage))} miles
+                    Typical asking price for a {carName}{u.trim ? ` ${u.trim}` : ""} with {fmtN(Number(u.mileage))} miles
                   </h2>
                   <div className="value num">{fmt$(estResult.predicted_price)}</div>
                   {estResult.range_low != null && (
@@ -895,11 +907,12 @@ export default function CarIntelDashboard() {
                     <button
                       className="btn-quiet"
                       style={{ marginTop: 18 }}
-                      onClick={() => showListings(() => { setMakeFilter(estMake); setModelFilter(estModel); setMinYear(String(estYear)); setMaxYear(String(estYear)); })}
+                      onClick={() => showListings(() => { setMakeFilter(u.make); setModelFilter(u.model); setMinYear(String(u.year)); setMaxYear(String(u.year)); })}
                     >
                       See {fmtN(matches)} {carName} {matches === 1 ? "listing" : "listings"}
                     </button>
                   )}
+                </div>
                 </>
               ) : (
                 <>
@@ -1019,9 +1032,11 @@ export default function CarIntelDashboard() {
               <Select label="Sort by" hideLabel value={sortKey} onChange={(v) => { setSortKey(v); setSortDir(SORTS[v].start); }}>
                 {Object.entries(SORTS).filter(([k]) => k !== "mpg" || hasMpg || sortKey === "mpg").map(([k, sort]) => <option key={k} value={k}>{sort.label}</option>)}
               </Select>
-              <button className="btn-quiet" title="Flip the order" disabled={featured} onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
-                <span aria-hidden="true">{featured ? "" : sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
-              </button>
+              {!featured && (
+                <button className="btn-quiet" title="Flip the order" onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}>
+                  <span aria-hidden="true">{sortDir === "asc" ? "↑" : "↓"}</span> {SORTS[sortKey][sortDir]}
+                </button>
+              )}
             </div>
           </div>
 

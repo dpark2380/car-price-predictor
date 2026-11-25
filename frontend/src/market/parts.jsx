@@ -51,10 +51,10 @@ export function KeyFacts({ items, three }) {
   );
 }
 
-export function Fig({ title, src, children }) {
+export function Fig({ title, src, children, as: Title = "h3" }) {
   return (
     <div className="panel fig">
-      <div className="fig-head"><h3>{title}</h3>{src && <Src>{src}</Src>}</div>
+      <div className="fig-head"><Title>{title}</Title>{src && <Src>{src}</Src>}</div>
       {children}
     </div>
   );

@@ -18,7 +18,7 @@ export function BrandsTable({ rows, current }) {
       <table>
         <thead>
           <tr>
-            <th scope="col">Brand</th><th scope="col">Cars</th><th scope="col">Median price</th><th scope="col">{gapHead.text}</th><th scope="col">Days on market</th>
+            <th scope="col">Brand</th><th scope="col">Active listings</th><th scope="col">Median price</th><th scope="col">{gapHead.text}</th><th scope="col">Days on market</th>
           </tr>
         </thead>
         <tbody>
@@ -43,6 +43,7 @@ export function BrandIndex() {
   return (
     <>
       <div className="view-head solo"><h1 className="page-title">Brands</h1></div>
+      <p className="note">Market pages count every active listing we hold, one per car, including cars we have not seen advertised in the last three weeks. The listings pages show only cars seen recently, so their totals are lower.</p>
       <Section id="idx-h1" title="All brands" src={`own DB, ${rows.length} of ${data.length}`} first>
         <div className="panel">
           {rows.length ? <BrandsTable rows={rows} /> : <p className="empty-inline">No brand has enough cars yet.</p>}
@@ -80,7 +81,7 @@ export function BrandView({ make: makeIn }) {
       <section className="panel section first" aria-label="Summary">
         <KeyFacts
           items={[
-            { k: "Cars listed", v: num(s.n), s: top && s.n > 0 && d.models.length > 1 ? `${Math.round((top.n / s.n) * 100)}% are ${plural(top.model)}` : null },
+            { k: "Active listings", v: num(s.n), s: top && s.n > 0 && d.models.length > 1 ? `${Math.round((top.n / s.n) * 100)}% are ${plural(top.model)}` : null },
             { k: "Models", v: num(s.models), s: `${big} with ${MODEL_MIN}+ cars` },
             { k: "Median asking price", v: usd(s.median_price) },
             { k: "Median days on market", v: num(s.median_dom) },

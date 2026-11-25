@@ -67,7 +67,7 @@ function Method({ card, live }) {
 
   const flow = [
     ["Collect", "Dealer listings, scraped nightly"],
-    ["Filter", `Latest row per VIN, $3k to $100k: ${num(rows.pool)} cars`],
+    ["Filter", `Latest row per VIN, $3k to $100k: ${num(rows.pool)} training rows`],
     ["Split by VIN", `${share(rows.train)} / ${share(rows.val)} / ${share(rows.test)}, no VIN in two splits`],
     ["Add comparables", "Same make and model at other dealers"],
     ["Predict", "XGBoost under $10k, a three-model blend above"],
@@ -108,7 +108,7 @@ score  = 50 + 40 × 1.5 / 3 = 70.0
           </div>
           <div className="two split">
             <div className="fig">
-              <div className="fig-head"><h3>Importance by group</h3><Src>permutation, {num(card.importance.rows)} validation cars</Src></div>
+              <div className="fig-head"><h3>Importance by group</h3><Src>permutation, {num(card.importance.rows)} validation rows</Src></div>
               <Bars
                 label={`Importance by group: ${groups.map((g) => `${g.group} adds ${usd(g.mae_added)} of error when shuffled`).join(", ")}.`}
                 rows={groups.map((g) => ({ k: g.group, frac: g.relative, v: `+${usd(g.mae_added)}` }))}
@@ -152,7 +152,7 @@ score  = 50 + 40 × 1.5 / 3 = 70.0
             <p className="note">Median absolute error as a share of the asking price.</p>
           </Fig>
           <div className="stack">
-            <Fig title="Test error by model" src={`training log, ${num(test.n)} held-out cars`}>
+            <Fig title="Test error by model" src={`training log, ${num(test.n)} held-out rows`}>
               <Bars
                 label={`Test error by model: ${cands.map(([k, c]) => `${MODEL_NAMES[k] || k} ${usd(c.test_mae)}`).join(", ")}.`}
                 rows={cands.map(([k, c]) => ({ k: (MODEL_NAMES[k] || k) + (k === card.selected_model ? ", in use" : ""), frac: c.test_mae / maxMae, v: usd(c.test_mae), me: k === card.selected_model }))}
@@ -165,7 +165,7 @@ score  = 50 + 40 × 1.5 / 3 = 70.0
                 three
                 items={[
                   { k: "Median error", v: pct(test.median_ape), s: test.ci95 ? `95% interval ${test.ci95[0].toFixed(1)} to ${test.ci95[1].toFixed(1)}` : null },
-                  { k: "Held-out cars", v: num(test.n), s: `${Math.round(test.within10)}% within 10%` },
+                  { k: "Held-out rows", v: num(test.n), s: `${Math.round(test.within10)}% within 10%` },
                   { k: "Mean error", v: usd(test.mae), s: `bias ${signedPct(test.bias_pct)}` },
                 ]}
               />
@@ -174,9 +174,9 @@ score  = 50 + 40 × 1.5 / 3 = 70.0
         </div>
       </Section>
 
-      <Section id="me-h4" title={`Grades across ${num(live.cars_listed)} cars`} src="own DB">
+      <Section id="me-h4" title={`Grades across ${num(live.cars_listed)} active listings`} src="own DB">
         <div className="panel fig">
-          <GradeMix grades={live.grades} showPct label={`Grades across ${num(live.cars_listed)} cars`} />
+          <GradeMix grades={live.grades} showPct label={`Grades across ${num(live.cars_listed)} active listings`} />
           <TableDisclosure
             head={["Grade", "Cars", "Share"]}
             rows={GRADES.map((g) => ({ cells: [g.label, num(live.grades[g.key] || 0), pct(((live.grades[g.key] || 0) / live.cars_listed) * 100)] }))}

@@ -21,9 +21,9 @@ def test_map_listing_new_fields():
     assert (m["dealer_website"], m["dealer_msa_code"], m["overall_length"], m["interior_color"]) == ("x.com", "7320", 169.1, "Ebony")
     m = map_listing({**raw, "fees": [{"a": 1}], "is_certified": None, "price_includes_fees": None})
     assert (m["fees"], m["is_certified"], m["price_includes_fees"]) == (None, 0, None)
-    try:   # the real payload, when this machine has it
+    try:   # the real payload, when this machine has it: every listing maps without error (unpriced ones map to None)
         for r in json.load(open(SAMPLE))["listings"]:
-            assert map_listing(r) is not None
+            map_listing(r)
     except OSError:
         pass
 
@@ -55,9 +55,11 @@ def test_featured_is_stable_and_paged():
         ids = lambda q: [r["listing_id"] for r in c.get("/api/deals?sort=featured&" + q).get_json()]
         a, b = ids("seed=7"), ids("seed=7")
         assert a == b and a != ids("seed=8")
-        assert all(int(i[1:]) % 4 and int(i[1:]) % 5 for i in a)     # photo and fair-or-better only
+        assert len(a) == 60                                          # nothing hidden
+        n = sum(1 for i in a if int(i[1:]) % 4)
+        assert all(int(i[1:]) % 4 for i in a[:n]) and not any(int(i[1:]) % 4 for i in a[n:])   # photos first
         assert ids("seed=7&limit=10") + ids("seed=7&limit=10&offset=10") == a[:20]
-        assert c.get("/api/deals/count?sort=featured&seed=7").get_json() == {"count": len(a)}
+        assert c.get("/api/deals/count?sort=featured&seed=7").get_json() == c.get("/api/deals/count").get_json() == {"count": 60}
     finally:
         api._deal_records = real
 

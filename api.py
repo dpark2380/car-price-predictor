@@ -179,7 +179,8 @@ def _extras(c):
     g = (lambda k: getattr(c, k)) if isinstance(c, CarListing) else c.get
     return {"fees": sf(g("fees")), "price_includes_fees": si(g("price_includes_fees")),
             "base_int_color": ss(g("base_int_color")), "interior_color": ss(g("interior_color")),
-            "is_certified": si(g("is_certified")), "stock_no": ss(g("stock_no")), "dos_active": si(g("dos_active")),
+            "is_certified": si(g("is_certified")), "stock_no": ss(g("stock_no")),
+            "dos_active": si(g("dos_active") if si(g("dos_active")) is not None else g("dom_active")),   # days at this dealer's site, whichever source has it
             "dealer_website": ss(g("dealer_website")), "dealer_msa_code": ss(g("dealer_msa_code")),
             "overall_length": sf(g("overall_length"))}
 
@@ -269,7 +270,6 @@ _DEAL_PARAMS = ("limit", "offset", "min_score", "make", "model", "body", "drivet
                 "min_miles", "max_miles", "min_year", "max_year", "has_photo", "reduced", "sort", "seed")
 _CHOICES = {"drivetrain": {"awd", "4wd", "fwd", "rwd"}, "fuel": {"gas", "hybrid", "electric", "diesel"},
             "color": {"black", "white", "silver", "grey", "blue", "red", "green", "brown", "other"}}
-FEATURED_MIN_SCORE = market.TIER_MIN[2][0]   # "fair" or better
 
 
 def _arg_choices(name):
@@ -330,9 +330,10 @@ def _filtered_deals():
         rows = [r for r in rows if r["reduced"]]
     if sort == "featured":
         # Same seed, same order: shuffle in listing_id order so paging never repeats or skips a car.
-        rows = sorted((r for r in rows if r["photo_url"] and (r["deal_score"] or 0) >= FEATURED_MIN_SCORE),
-                      key=lambda r: r["listing_id"])
+        # Cars with a photo come first; no car is hidden.
+        rows = sorted(rows, key=lambda r: r["listing_id"])
         random.Random(seed).shuffle(rows)
+        rows.sort(key=lambda r: not r["photo_url"])
     elif sort == "mpg":   # city/highway average, cars without MPG last
         def mpg(r):
             v = [m for m in (r["city_mpg"], r["highway_mpg"]) if m]
@@ -355,7 +356,7 @@ def deals():
       - drivetrain (awd,4wd,fwd,rwd), fuel (gas,hybrid,electric,diesel), color (black,white,silver,grey,blue,red,green,brown,other):
         comma-separated lists mean "any of"
       - min_price, max_price, min_miles, max_miles, min_year, max_year; has_photo=1; reduced=1 (a believable price cut)
-      - sort: score (default), featured (seeded shuffle of cars with a photo and a fair-or-better grade), mpg
+      - sort: score (default), featured (seeded shuffle, cars with a photo first), mpg
       - seed: whole number for sort=featured
     """
     limit  = _arg_int("limit", None, 1, 50_000)
@@ -542,6 +543,7 @@ def car(vin):
             "city_mpg": si(c.city_mpg), "highway_mpg": si(c.highway_mpg), **_extras(c),
             "location_city": c.location_city, "location_state": c.location_state,
             "days_on_market": si(c.days_listed), "days_in_listing": si(c.dom_active),
+            "last_seen": str(c.last_seen)[:10] if c.last_seen else None,   # as /api/deals: the listing page counts days from it
             "first_listed": str(c.first_seen_at_mc_date)[:10] if c.first_seen_at_mc_date else None,
             "first_seen": str(c.first_seen)[:10] if c.first_seen else None,
             "deal_score": sf(p.deal_score), "deal_label": p.deal_label, "rating_basis": p.rating_basis,

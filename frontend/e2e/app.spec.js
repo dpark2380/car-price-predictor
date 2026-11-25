@@ -76,7 +76,23 @@ test("price check shows an estimate and its range", async ({ page }) => {
   await page.getByRole("button", { name: "Check price" }).click();
   await expect(page.locator(".pc-result .value")).toHaveText("$21,300");
   await expect(page.getByText("$19,800")).toBeVisible();
+  await page.getByLabel("Year").fill("1850");
+  await expect(page.getByText("Press Check price to update.")).toBeVisible();
+  await expect(page.locator("#pc-result-title")).toContainText("2020 Honda Accord"); // the heading keeps the inputs the result is for
   expect(await noSideScroll(page)).toBe(true);
+});
+
+test("a home chip keeps the dropdown choices and the method link is in the nav", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Make/ }).click();
+  await page.getByRole("option", { name: "Toyota" }).click();
+  await page.getByRole("button", { name: "Under $15,000" }).click();
+  await expect(page).toHaveURL(/make=toyota/);
+  await expect(page).toHaveURL(/price_to=15000/);
+  await page.goto("/market/method");
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await expect(nav.getByRole("link", { name: "Method" })).toHaveAttribute("aria-current", "page");
+  await expect(nav.getByRole("link", { name: "Market" })).not.toHaveAttribute("aria-current", "page");
 });
 
 test("the theme toggle switches to dark and survives a reload", async ({ page }) => {
@@ -167,7 +183,7 @@ test("the car page shows its price points, and the load-full-history control rep
 test("the method page reads the model card, and a listing links to the Market pages", async ({ page }) => {
   await page.goto("/market/method");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("How the estimate works");
-  await expect(page.getByText("Grades across 100 cars")).toBeVisible();
+  await expect(page.getByText("Grades across 100 active listings")).toBeVisible();
   await page.goto("/listings/b2");
   await expect(page.getByRole("link", { name: "Price history" })).toHaveAttribute("href", "/car/4T1B11HK5KU123456");
   await expect(page.getByRole("link", { name: "All Toyota Camrys" })).toHaveAttribute("href", "/market/Toyota/Camry");
