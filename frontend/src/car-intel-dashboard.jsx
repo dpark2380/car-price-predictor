@@ -4,6 +4,7 @@ import { Select } from "./components/Select";
 import Market from "./market/Market";
 import { marketPath as marketUrl } from "./market/api";
 import { carName, plural } from "./market/format";
+import { dealTier } from "./utils/scoreColor";
 import { BrandMark, CardSkeleton, Certified, DealPill, FUEL_LABELS, Gallery, ListingCard, NOT_RATED_WHY, PriceBar, ThemeToggle, STALE_DAYS, daysOnSale, driveFuel, showFees, vsMarket } from "./components/ui";
 
 // Dealer colour names arrive in any case ("GRAY", "isle of man green"): title case them, small joining words lower.
@@ -738,6 +739,7 @@ export default function CarIntelDashboard() {
                 <div className={`card-market num ${vm.cls}`}>{vm.text}</div>
                 <PriceBar score={deal.deal_score} />
                 {deal.rating_basis && <p className="note">Rough rating</p>}
+                {dealTier(deal.deal_score) >= 4 && onSale >= STALE_DAYS && <p className="note caution">Note: For sale for {fmtN(onSale)} days</p>}
               </> : <p className="note">{NOT_RATED_WHY}</p>}
               <dl className="facts">
                 {rated && <><dt>Market value</dt><dd className="num">{fmt$(deal.predicted_price)}</dd></>}

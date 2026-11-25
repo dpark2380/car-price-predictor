@@ -156,7 +156,9 @@ export function ListingCard({ deal, href, onOpen, level = 3 }) {
         <div className="card-specs">
           <span className="num">{fmtN(deal.mileage)} mi</span>
           {place && <span>{place}</span>}
-          <span className={`num ${daysOnSale(deal) >= STALE_DAYS ? "caution" : ""}`}>Listed {fmtN(daysOnSale(deal))} days</span>
+          {daysOnSale(deal) >= STALE_DAYS
+            ? <span className="num caution">For sale for {fmtN(daysOnSale(deal))} days</span>
+            : <span className="num">Listed {fmtN(daysOnSale(deal))} days</span>}
           {deal.reduced && <span className="num">Reduced {fmt$(deal.reduced.amount)}</span>}
         </div>
       </div>
